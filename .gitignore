@@ -1,0 +1,24 @@
+@"
+# Python
+__pycache__/
+*.py[cod]
+*.so
+db.sqlite3
+
+# Environment
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Django
+*.log
+staticfiles/
+media/
+"@ | Out-File -Encoding utf8 .gitignore
