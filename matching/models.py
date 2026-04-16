@@ -1,31 +1,10 @@
 """
-Ride model — the core data structure for Functionality 3.
-
-Links a RideOffer to one or more RideRequests and stores the matched ride's
-status, geographic route, and total detour time.
+Ride model — Standardized for PostGIS.
 """
 
 from django.db import models
-
-# ---------------------------------------------------------------------------
-# GDAL fallback — allows tests to run on plain SQLite (no GDAL required).
-# In production (PostGIS), the real LineStringField is used.
-# ---------------------------------------------------------------------------
-try:
-    from django.contrib.gis.db import models as gis_models
-except Exception:
-    gis_models = models
-
-    class _FakeLineStringField(models.TextField):
-        """Stand-in for LineStringField when GDAL/PostGIS is unavailable."""
-        def __init__(self, *args, **kwargs):
-            kwargs.pop("srid", None)
-            kwargs.pop("geography", None)
-            super().__init__(*args, **kwargs)
-
-    gis_models.LineStringField = _FakeLineStringField
-
-from users.models import RideOffer, RideRequest
+from django.contrib.gis.db import models as gis_models
+from rides.models import RideOffer, RideRequest
 
 
 class Ride(models.Model):
@@ -62,10 +41,10 @@ class Ride(models.Model):
         help_text="Current lifecycle stage of the ride.",
     )
     actual_route = gis_models.LineStringField(
-        srid=4326,
+        geography=True,
         null=True,
         blank=True,
-        help_text="Geographic path of the ride (stored as a GeoJSON LineString).",
+        help_text="Geographic path of the ride.",
     )
     total_detour_time = models.IntegerField(
         default=0,

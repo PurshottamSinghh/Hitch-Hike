@@ -1,0 +1,14 @@
+# Root level ignore
+node_modules
+.next
+__pycache__
+*.pyc
+.git
+.venv
+venv
+.env
+.env.local
+db.sqlite3
+frontend/node_modules
+frontend/.next
+docker-compose.lock

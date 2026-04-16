@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "users.apps.UsersConfig",
     "matching.apps.MatchingConfig",
+    "rides.apps.RidesConfig",
 ]
 
 MIDDLEWARE = [
@@ -85,7 +86,7 @@ DATABASES = {
 }
 
 # Custom user model
-AUTH_USER_MODEL = "users.User"
+# AUTH_USER_MODEL = "users.User"
 
 # Speed up password hashing in tests
 PASSWORD_HASHERS = [

@@ -6,7 +6,57 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.0.0] — 2026-04-14
+
+### Added — Frontend Prototype (React / Next.js / Mapbox)
+
+Scaffolded in `frontend/` using **Next.js 16**, **Tailwind CSS v4**, **Mapbox GL JS v3**, and **react-map-gl v8**.
+
+#### Project Setup
+| File | Purpose |
+|------|---------|
+| `frontend/package.json` | Next.js 16, react-map-gl/mapbox, mapbox-gl, lucide-react, Tailwind CSS v4 |
+| `frontend/.env.local` | `NEXT_PUBLIC_MAPBOX_TOKEN` for client-side Mapbox access |
+| `frontend/app/globals.css` | Design system: dark theme tokens, pulse animation, skeleton shimmer, driver markers |
+| `frontend/app/layout.js` | Root layout with Inter font + Mapbox GL CSS via CDN `<link>` tags |
+
+#### Custom Hooks
+| Hook | File | Purpose |
+|------|------|---------|
+| `useUserLocation` | `hooks/useUserLocation.js` | Wraps `navigator.geolocation.getCurrentPosition` with loading/error/retry state |
+
+#### Components
+| Component | File | Purpose |
+|-----------|------|---------|
+| `Sidebar` | `components/Sidebar.jsx` | Desktop left rail (72px) + mobile bottom bar with 5 nav items |
+| `ActionPanel` | `components/ActionPanel.jsx` | GPS-autofilled pickup, dropoff input, search button, idle/loading/results states |
+| `MapView` | `components/MapView.jsx` | Dark Mapbox map, pulsing blue-dot, driver car markers, curved GeoJSON route line |
+| `DriverCard` | `components/DriverCard.jsx` | Driver result card with avatar, info pills, accept-match button |
+| `LoadingSkeleton` | `components/LoadingSkeleton.jsx` | 3 shimmer placeholder cards during search loading |
+
+#### Main Page (`app/page.js`)
+- State machine: `idle` → `loading` (1.5s skeleton) → `results` (3 dummy drivers)
+- Dummy drivers positioned relative to user's GPS coordinates
+- Click driver card → draws curved Bezier route on map
+- Accept match → button transitions to "✓ Matched" state
+
+#### Design Highlights
+- Dark glassmorphic theme with indigo/purple gradient accents
+- Pulsing blue-dot marker for live user location
+- Driver markers with gradient backgrounds and hover scale
+- Route line with glow layer + dashed main line
+- Responsive: 45vh panel on mobile, 380–420px fixed sidebar on desktop
+
+### Run Command
+```bash
+cd frontend && npm run dev
+# → http://localhost:3000
+```
+
+---
+
 ## [1.1.0] — 2026-04-06
+
 
 ### Added — Test Suite
 

@@ -12,7 +12,7 @@ import re
 from rest_framework import serializers
 
 from matching.models import Ride
-from users.models import RideOffer, RideRequest
+from rides.models import RideOffer, RideRequest
 
 
 # ---------------------------------------------------------------------------
@@ -20,22 +20,13 @@ from users.models import RideOffer, RideRequest
 # ---------------------------------------------------------------------------
 def _extract_coords(value):
     """
-    Extract [longitude, latitude] from a GIS Point object or a WKT string.
-
-    Handles:
-      - Real ``Point`` objects (production / PostGIS) via ``.x`` / ``.y``
-      - WKT strings like ``"POINT(-81.6944 41.4993)"`` (test / SQLite)
+    Extract [longitude, latitude] from a GIS Point object.
     """
     if value is None:
         return None
     # If it has .x and .y attributes, it's a real Point
     if hasattr(value, "x") and hasattr(value, "y"):
         return [value.x, value.y]
-    # Fall back to parsing WKT string
-    if isinstance(value, str):
-        match = re.match(r"POINT\(\s*([-\d.]+)\s+([-\d.]+)\s*\)", value)
-        if match:
-            return [float(match.group(1)), float(match.group(2))]
     return None
 
 
@@ -58,7 +49,7 @@ class RideOfferSummarySerializer(serializers.ModelSerializer):
             "destination_coords",
             "departure_time",
             "available_seats",
-            "status",
+            "is_active",
         ]
 
     def get_origin_coords(self, obj):
@@ -73,7 +64,7 @@ class RideOfferSummarySerializer(serializers.ModelSerializer):
 class RideRequestSummarySerializer(serializers.ModelSerializer):
     """Compact read-only view of a RideRequest embedded inside Ride."""
 
-    rider_name = serializers.CharField(source="rider.__str__", read_only=True)
+    passenger_name = serializers.CharField(source="passenger.__str__", read_only=True)
     pickup_coords = serializers.SerializerMethodField()
     dropoff_coords = serializers.SerializerMethodField()
 
@@ -81,10 +72,10 @@ class RideRequestSummarySerializer(serializers.ModelSerializer):
         model = RideRequest
         fields = [
             "id",
-            "rider_name",
+            "passenger_name",
             "pickup_coords",
             "dropoff_coords",
-            "requested_time",
+            "desired_time",
             "status",
         ]
 
@@ -148,8 +139,7 @@ class RideSerializer(serializers.ModelSerializer):
                 "type": "LineString",
                 "coordinates": list(obj.actual_route.coords),
             }
-        # Fallback for non-GIS environments
-        return str(obj.actual_route)
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -7,7 +7,9 @@ This module contains the ``MatchingEngine`` class which encapsulates:
   3. Thread-safe ride confirmation with ``select_for_update()`` locking.
 """
 
+import json
 import logging
+import re
 from typing import Any
 
 import requests
@@ -15,7 +17,19 @@ from django.conf import settings
 from django.db import transaction
 
 from matching.models import Ride
-from users.models import RideOffer, RideRequest
+from rides.models import RideOffer, RideRequest
+
+
+def _extract_coords(value):
+    """
+    Extract (longitude, latitude) from a GIS Point object.
+    Returns (lng, lat) or (0.0, 0.0) as fallback.
+    """
+    if value is None:
+        return (0.0, 0.0)
+    if hasattr(value, "x") and hasattr(value, "y"):
+        return (value.x, value.y)
+    return (0.0, 0.0)
 
 logger = logging.getLogger(__name__)
 
@@ -178,14 +192,14 @@ class MatchingEngine:
                 f"RideRequest with id {ride_request_id} does not exist."
             )
 
-        if ride_request.status == "matched":
+        if ride_request.status in ("matched", "accepted"):
             raise MatchingError(
                 f"RideRequest #{ride_request_id} has already been matched."
             )
 
         # --- Fetch active offers with at least 1 seat -------------------
         offers = RideOffer.objects.filter(
-            status="active",
+            is_active=True,
             available_seats__gte=1,
         ).select_related("driver")
 
@@ -240,10 +254,10 @@ class MatchingEngine:
         Returns a dict with ``original_duration``, ``detoured_duration``,
         and ``extra_seconds``.
         """
-        driver_origin = (offer.origin.x, offer.origin.y)
-        driver_dest = (offer.destination.x, offer.destination.y)
-        rider_pickup = (request.pickup_location.x, request.pickup_location.y)
-        rider_dropoff = (request.dropoff_location.x, request.dropoff_location.y)
+        driver_origin = _extract_coords(offer.origin)
+        driver_dest = _extract_coords(offer.destination)
+        rider_pickup = _extract_coords(request.pickup_location)
+        rider_dropoff = _extract_coords(request.dropoff_location)
 
         # --- Original trip (no detour) -----------------------------------
         original_data = self.fetch_mapbox_distance_matrix(
@@ -334,7 +348,7 @@ class MatchingEngine:
                     f"RideRequest with id {ride_request_id} does not exist."
                 )
 
-            if ride_request.status == "matched":
+            if ride_request.status in ("matched", "accepted"):
                 raise MatchingError(
                     f"RideRequest #{ride_request_id} is already matched."
                 )
@@ -363,7 +377,7 @@ class MatchingEngine:
             # --- Decrement seats & update statuses -----------------------
             offer.available_seats -= 1
             if offer.available_seats == 0:
-                offer.status = "full"
+                offer.is_active = False
             offer.save()
 
             ride_request.status = "matched"

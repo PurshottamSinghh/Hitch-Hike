@@ -28,7 +28,7 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 # ---------------------------------------------------------------------------
 SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
-ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+ALLOWED_HOSTS = ["*"]
 
 # ---------------------------------------------------------------------------
 # Mapbox API
@@ -49,14 +49,17 @@ INSTALLED_APPS = [
     "django.contrib.gis",
     # Third-party
     "rest_framework",
+    "rest_framework.authtoken",
+    "corsheaders",
     # Local apps
-    "users.apps.UsersConfig",
     "matching.apps.MatchingConfig",
+    "rides.apps.RidesConfig",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -111,7 +114,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # ---------------------------------------------------------------------------
 # Custom user model (placeholder — teammates will own this)
 # ---------------------------------------------------------------------------
-AUTH_USER_MODEL = "users.User"
+# AUTH_USER_MODEL = "users.User"
 
 # ---------------------------------------------------------------------------
 # Internationalization
@@ -135,6 +138,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django REST Framework
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
@@ -146,3 +153,5 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
 }
+
+CORS_ALLOW_ALL_ORIGINS = True  # For development

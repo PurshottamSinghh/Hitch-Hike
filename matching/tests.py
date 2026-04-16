@@ -27,7 +27,8 @@ from rest_framework.test import APITestCase
 
 from matching.models import Ride
 from matching.services import MatchingEngine, MatchingError
-from users.models import RideOffer, RideRequest, User
+from users.models import User
+from rides.models import RideOffer, RideRequest
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -109,7 +110,7 @@ class _BaseTestMixin:
             destination="POINT(-81.6785 41.5085)",   # CSU campus
             departure_time=now,
             available_seats=2,
-            status="active",
+            is_active=True,
         )
 
         # --- RideOffer with only 1 seat (for edge-case tests) ------------
@@ -119,22 +120,22 @@ class _BaseTestMixin:
             destination="POINT(-81.6800 41.5100)",
             departure_time=now,
             available_seats=1,
-            status="active",
+            is_active=True,
         )
 
         # --- RideRequests ------------------------------------------------
         self.ride_request = RideRequest.objects.create(
-            rider=self.rider,
+            passenger=self.rider,
             pickup_location="POINT(-81.6900 41.5010)",
             dropoff_location="POINT(-81.6800 41.5060)",
-            requested_time=now,
+            desired_time=now,
             status="pending",
         )
         self.ride_request_2 = RideRequest.objects.create(
-            rider=self.rider,
+            passenger=self.rider,
             pickup_location="POINT(-81.6910 41.5020)",
             dropoff_location="POINT(-81.6810 41.5070)",
-            requested_time=now,
+            desired_time=now,
             status="pending",
         )
 
@@ -253,7 +254,7 @@ class TestConfirmMatchACIDCompliance(_BaseTestMixin, TestCase):
         # Verify offer is now full
         self.ride_offer_one_seat.refresh_from_db()
         self.assertEqual(self.ride_offer_one_seat.available_seats, 0)
-        self.assertEqual(self.ride_offer_one_seat.status, "full")
+        self.assertFalse(self.ride_offer_one_seat.is_active)
 
         # Second confirmation — should FAIL (no seats left)
         with self.assertRaises(MatchingError) as ctx:

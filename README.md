@@ -1,189 +1,79 @@
-# Hitch-Hike
+# Hitch-Hike: Uber-Style Dispatch System
 
-Hitch-Hike is a Django REST backend for a campus carpool matching system. The project focuses on matching rider requests to driver offers, ranking candidates by detour time, and confirming rides safely with database transactions.
+Hitch-Hike is a full-stack campus carpool dispatch engine. It connects Riders with nearby Drivers in real-time, featuring automated matching, Mapbox-powered route tracking, and a secure Django REST backbone.
 
-## What This Project Does
+## 🚀 Quick Start (Zero-Config)
 
-- Stores users, ride offers, and ride requests.
-- Ranks matching ride offers for a rider using the Mapbox Matrix API.
-- Confirms matches while preventing double-booking with row-level locking.
-- Exposes read-only ride list and detail endpoints for confirmed rides.
+The fastest way to run the **whole app** is via Docker. This will spin up the Frontend, Backend, and a local PostGIS Database automatically.
 
-## Tech Stack
+```bash
+# 1. Clone and Navigate
+git clone https://github.com/PurshottamSinghh/Hitch-Hike.git
+cd Hitch-Hike
 
-- Python 3.12 recommended
-- Django 4.2
-- Django REST Framework
-- PostgreSQL with PostGIS
-- Mapbox Matrix API
+# 2. Start all services
+docker-compose up --build -d
 
-## Project Structure
-
-```text
-Hitch-Hike/
-|-- hitchhike/         # Django project settings, root URLs, test settings
-|-- matching/          # Matching engine, ride model, serializers, API views, tests
-|-- users/             # Custom user model plus placeholder ride offer/request models
-|-- manage.py
-|-- requirements.txt
-|-- gdal_install.txt   # Windows setup notes for GDAL/PostGIS support
-|-- CHANGELOG.md
+# 3. Seed Demo Data (Admin, Drivers, Riders)
+docker-compose exec backend python manage.py seed_demo_data
 ```
 
-## Prerequisites
+Once all containers are healthy:
+- **Frontend**: [http://localhost:3000](http://localhost:3000)
+- **Backend API**: [http://localhost:8000](http://localhost:8000)
+- **Database**: Local PostGIS on port `5432`
 
-Before running the app locally, make sure you have:
+## 🏗️ Architecture
 
-- Python installed
-- PostgreSQL database access
-- PostGIS enabled on that database
-- A Mapbox access token
+- **Backend**: Django REST Framework + PostGIS (PostgreSQL)
+- **Frontend**: Next.js 16 (Turbopack) + Vanilla CSS (Glassmorphism UI)
+- **Database**: PostgreSQL with PostGIS extension for geospatial queries.
+- **Geospatial**: Mapbox Directions & Matrix APIs.
 
-If you are developing on Windows, `gdal_install.txt` includes local setup notes for GeoDjango dependencies.
+## 🔑 Environment Variables
 
-## Environment Variables
-
-Create a `.env` file in the project root with these values:
+You must create a `.env` file in the project root with your Mapbox tokens:
 
 ```env
-MAPBOX_SECRET_TOKEN=your_mapbox_token
-DATABASE_URL=postgresql://username:password@host:port/dbname?sslmode=require
-SECRET_KEY=your_django_secret_key
-DEBUG=True
+# Mapbox Tokens
+MAPBOX_SECRET_TOKEN=sk.xxx...
+NEXT_PUBLIC_MAPBOX_TOKEN=pk.xxx...
+
+# Django Settings
+SECRET_KEY=your-secure-key
 ALLOWED_HOSTS=localhost,127.0.0.1
+DEBUG=True
 ```
 
-Notes:
+> [!NOTE]
+> By default, `docker-compose` uses the local database service. To use an external database (like Neon), update the `DATABASE_URL` in your `.env` file and restart.
 
-- `DATABASE_URL` should point to a PostgreSQL database with the PostGIS extension enabled.
-- `MAPBOX_SECRET_TOKEN` is used by the matching engine when calling the Mapbox Matrix API.
-- Do not commit real credentials.
+## 🛤️ The User Flow
 
-## Setup
+### 1. The Rider Experience
+1. **Search**: Enter a destination on the interactive map.
+2. **Dispatch**: Click "Request Ride". The system broadcasts the request to all online drivers.
+3. **Tracking**: Once accepted, see the Driver approaching in real-time with an approach route drawn on the map.
 
-1. Create and activate a virtual environment.
-2. Install dependencies.
-3. Add your `.env` file.
-4. Run migrations.
-5. Start the development server.
+### 2. The Driver Experience
+1. **Go Online**: Flip the status switch to start receiving broadcasts.
+2. **Accept**: A modal pops up when a nearby rider is found.
+3. **Navigation**: Upon acceptance, the UI transforms into a Navigation Mode, showing the path to the Rider's pickup location.
+4. **Complete**: Pick up the rider and mark the trip as completed.
 
-Example commands:
+## 🛠️ Tech Stack Deep Dive
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python manage.py makemigrations
-python manage.py migrate
-python manage.py runserver
-```
+### Automated Dispatch Engine
+Instead of manual picking, Hitch-Hike uses a **Broadcast & Match** model.
+- **Pending**: Request is visible to all active drivers.
+- **Accepted**: Locked to a specific driver; status updates globally.
+- **Active**: Lifecycle tracking with Mapbox route lines.
+- **Completed**: Trip ends, driver returns to the pool.
 
-## Database Notes
-
-The default application settings use the PostGIS backend:
-
-- Django GIS support is enabled in `INSTALLED_APPS`
-- The database engine is `django.contrib.gis.db.backends.postgis`
-
-Enable PostGIS once on your database:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS postgis;
-```
-
-## API Endpoints
-
-All matching routes are mounted under `/api/matching/`.
-
-### Rank Matches
-
-`GET /api/matching/rank/<ride_request_id>/`
-
-Returns available ride offers ranked by smallest detour.
-
-Example response shape:
-
-```json
-{
-  "ride_request_id": 42,
-  "matches": [
-    {
-      "ride_offer_id": 7,
-      "driver_name": "Alice Smith",
-      "departure_time": "2026-04-07T08:00:00-04:00",
-      "available_seats": 3,
-      "original_duration": 1200.0,
-      "detoured_duration": 1450.0,
-      "extra_seconds": 250.0
-    }
-  ]
-}
-```
-
-### Confirm Match
-
-`POST /api/matching/confirm/`
-
-Confirms a match between a ride offer and a ride request.
-
-Example request body:
-
-```json
-{
-  "ride_offer_id": 7,
-  "ride_request_id": 42
-}
-```
-
-This operation:
-
-- locks the related ride offer and ride request rows
-- prevents double-booking
-- decrements available seats
-- marks the request as matched
-- creates or updates a `Ride` record
-
-### List Rides
-
-`GET /api/matching/rides/`
-
-Returns all rides.
-
-### Ride Detail
-
-`GET /api/matching/rides/<pk>/`
-
-Returns a single ride by primary key.
-
-## Testing
-
-This project includes a dedicated test settings module for local testing without GDAL, SpatiaLite, or PostGIS.
-
-Tests use:
-
-- in-memory SQLite
-- mocked Mapbox API calls
-- GIS field fallbacks in model code
-
-Run the matching test suite with:
-
-```powershell
-python manage.py test matching --settings=hitchhike.test_settings
-```
-
-## Current Implementation Notes
-
-- `users/models.py` contains placeholder `RideOffer` and `RideRequest` models so the matching feature can run independently.
-- `matching/services.py` contains the core ranking and confirmation business logic.
-- `matching/tests.py` covers ranking, confirm-match behavior, and API endpoint responses.
-
-## Known Constraints
-
-- Live ranking depends on the Mapbox Matrix API being available.
-- Production usage expects a PostgreSQL/PostGIS database.
-- Some user and ride-related models are marked as placeholders and may be replaced as the wider project is integrated.
-
-## Helpful Files
-
-- `gdal_install.txt`: Windows notes for GIS dependency setup
-- `CHANGELOG.md`: project change history
+---
+## 📄 Project Structure
+- `hitchhike/`: Project configuration and settings.
+- `rides/`: Core dispatch logic and model state.
+- `matching/`: Geospatial ranking algorithms.
+- `frontend/`: Next.js web application.
+- `docker-compose.yml`: Full-stack orchestration.
