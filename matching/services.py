@@ -380,7 +380,10 @@ class MatchingEngine:
                 offer.is_active = False
             offer.save()
 
-            ride_request.status = "matched"
+            # Fix: Use 'accepted' status to match frontend polling and manual acceptance
+            # Also set the driver directly on the request for immediate visibility
+            ride_request.status = "accepted"
+            ride_request.driver = offer.driver
             ride_request.save()
 
             logger.info(

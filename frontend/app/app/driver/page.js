@@ -13,10 +13,6 @@ export default function DriverPage() {
       router.push("/login");
       return;
     }
-    const parsed = JSON.parse(user);
-    if (parsed.profile?.role !== "driver") {
-      router.push(`/app/${parsed.profile?.role || "rider"}`);
-    }
   }, [router]);
 
   return (

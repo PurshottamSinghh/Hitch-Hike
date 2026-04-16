@@ -2,6 +2,9 @@
 
 Hitch-Hike is a full-stack campus carpool dispatch engine. It connects Riders with nearby Drivers in real-time, featuring automated matching, Mapbox-powered route tracking, and a secure Django REST backbone.
 
+> [!TIP]
+> **New to Hitch-Hike?** Check out our [Full User Guide](./USER_GUIDE.md) for a detailed walkthrough of Rider and Driver workflows.
+
 ## 🚀 Quick Start (Zero-Config)
 
 The fastest way to run the **whole app** is via Docker. This will spin up the Frontend, Backend, and a local PostGIS Database automatically.

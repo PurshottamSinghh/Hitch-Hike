@@ -19,12 +19,33 @@ export default function DriverDashboard() {
   // Track seen request IDs to trigger pop-ups only for new ones
   const seenRequestIds = useRef(new Set());
 
-  // Polling logic
+  // Polling logic & Location updates
   useEffect(() => {
     if (!isOnline) {
       setRequests([]);
       return;
     }
+
+    const sendLocation = async () => {
+      if (userCoords) {
+        try {
+          const token = localStorage.getItem("token");
+          await fetch("/api/rides/auth/location/", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              latitude: userCoords.lat,
+              longitude: userCoords.lng
+            })
+          });
+        } catch (err) {
+          console.error("Location update failed:", err);
+        }
+      }
+    };
 
     const poll = async () => {
       try {
@@ -46,9 +67,13 @@ export default function DriverDashboard() {
     };
 
     poll();
-    const interval = setInterval(poll, 5000);
+    sendLocation();
+    const interval = setInterval(() => {
+        poll();
+        sendLocation();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [isOnline]);
+  }, [isOnline, userCoords?.lat, userCoords?.lng]);
 
   const handleAction = async (requestId, action) => {
     try {
@@ -115,14 +140,13 @@ export default function DriverDashboard() {
         <div className="flex-1 relative">
           <MapView
             mapboxToken={MAPBOX_TOKEN}
-            // Use dummy location for demo purposes to avoid same-laptop overlapping
-            userCoords={{ lng: -83.615, lat: 41.655 }} 
-            drivers={[]} // No other drivers needed on map
-            selectedDriver={{
-                 id: activeRide.id,
-                 name: activeRide.passenger_username,
-                 coords: activeRide.pickup_location.coordinates, // MapView expects [lng, lat]
-            }}
+            userCoords={userCoords}
+            drivers={[]}
+            waypoints={[
+                { lng: userCoords.lng, lat: userCoords.lat }, // Start (Driver)
+                { lng: activeRide.pickup_location.coordinates[0], lat: activeRide.pickup_location.coordinates[1] }, // Pickup
+                { lng: activeRide.dropoff_location.coordinates[0], lat: activeRide.dropoff_location.coordinates[1] } // Destination
+            ]}
           />
           
           <div className="absolute bottom-10 left-6 right-6 z-30">

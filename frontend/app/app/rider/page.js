@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
+import Header from "@/components/Header";
+import LeaderboardModal from "@/components/LeaderboardModal";
 import ActionPanel from "@/components/ActionPanel";
 import MapView from "@/components/MapView";
 import useUserLocation from "@/hooks/useUserLocation";
@@ -27,20 +29,6 @@ const VEHICLES = [
   "Hyundai Elantra · Red",
 ];
 
-function matchToDriver(match, index) {
-  return {
-    id: match.ride_offer_id,
-    name: match.driver_name,
-    vehicle: VEHICLES[index % VEHICLES.length],
-    seats: match.available_seats,
-    detourMins: Math.round(match.extra_seconds / 60),
-    distance: `${(match.extra_seconds / 120).toFixed(1)} mi`,
-    rating: (4.5 + Math.random() * 0.5).toFixed(1),
-    coords: match.driver_origin?.coordinates || [-83.61, 41.66],
-    accepted: false,
-  };
-}
-
 export default function RiderPage() {
   const { coords: userCoords } = useUserLocation();
   const [searchState, setSearchState] = useState("idle");
@@ -48,6 +36,7 @@ export default function RiderPage() {
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [activeRide, setActiveRide] = useState(null);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const rideRequestIdRef = useRef(null);
   const router = useRouter();
 
@@ -58,26 +47,26 @@ export default function RiderPage() {
       router.push("/login");
       return;
     }
-    const parsed = JSON.parse(user);
-    if (parsed.profile?.role !== "rider") {
-      router.push(`/app/${parsed.profile?.role || "driver"}`);
-    }
   }, [router]);
 
   // Poll for Rider request status when in "pending_acceptance"
   useEffect(() => {
     let interval;
     if (searchState === "pending_acceptance" && rideRequestIdRef.current) {
+      console.log(`📡 Polling status for Request #${rideRequestIdRef.current}...`);
       const checkStatus = async () => {
         try {
           const data = await fetchRideRequestById(rideRequestIdRef.current);
-          if (data.status === "accepted") {
+          console.log(`   > Status: ${data.status}`);
+          
+          if (data.status === "accepted" || data.status === "matched") {
+            console.log("✅ Match confirmed! Navigating to ride details...");
             setSearchState("confirmed");
             setActiveRide(data);
             clearInterval(interval);
-          } else if (data.status === "rejected") {
+          } else if (data.status === "rejected" || data.status === "cancelled") {
             setSearchState("results");
-            setErrorMsg("Request was declined. Please try another driver.");
+            setErrorMsg(data.status === "rejected" ? "Request was declined by the driver." : "Ride was cancelled.");
             clearInterval(interval);
           }
         } catch (err) {
@@ -102,9 +91,6 @@ export default function RiderPage() {
         const pickup = { lng: userCoords.lng, lat: userCoords.lat };
         const rideRequest = await createRideRequest(pickup, dropoffCoords);
         rideRequestIdRef.current = rideRequest.id;
-
-        // Bypassing fetchRankedMatches for Phase 2: Dispatch Engine broad-broadcast
-        // Instead of waiting for results to pick from, we immediately move to searching
         setSearchState("pending_acceptance");
       } catch (err) {
         console.error("Search failed:", err);
@@ -129,11 +115,17 @@ export default function RiderPage() {
   );
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden text-white bg-[#0d1117]">
+    <div className="flex h-screen w-screen overflow-hidden text-white bg-var(--color-bg-primary)">
+      <Header onTrophyClick={() => setIsLeaderboardOpen(true)} />
       <Sidebar />
+      <LeaderboardModal 
+        isOpen={isLeaderboardOpen} 
+        onClose={() => setIsLeaderboardOpen(false)} 
+      />
 
-      <div className="flex flex-1 flex-col md:flex-row relative">
-        <div className="w-full md:w-[380px] lg:w-[400px] xl:w-[420px] h-[45vh] md:h-full shrink-0 z-10">
+      <div className="flex flex-1 flex-col lg:flex-row relative mt-24">
+        {/* Left Action Panel */}
+        <div className="w-full lg:w-[400px] xl:w-[450px] h-[45vh] lg:h-full shrink-0 z-10 p-6">
           <ActionPanel
             userCoords={userCoords}
             drivers={drivers}
@@ -146,7 +138,8 @@ export default function RiderPage() {
           />
         </div>
 
-        <div className="flex-1 relative">
+        {/* Map View Section */}
+        <div className="flex-1 relative m-6 lg:ml-0 overflow-hidden gs-surface border-indigo-500/10">
           <MapView
             mapboxToken={MAPBOX_TOKEN}
             userCoords={userCoords}
@@ -155,10 +148,10 @@ export default function RiderPage() {
           />
 
           {searchState === "pending_acceptance" && (
-            <div className="absolute inset-0 z-20 bg-[#0a0e1a]/80 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-500">
-              <div className="w-20 h-20 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 animate-spin mb-6" />
-              <h2 className="text-xl font-bold mb-2">Searching for Drivers...</h2>
-              <p className="text-sm text-slate-400 font-medium tracking-wide">Hang tight! We are finding the best match for you.</p>
+            <div className="absolute inset-0 z-20 bg-[#0a0e1a]/85 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-500">
+              <div className="w-20 h-20 rounded-full border-4 border-indigo-500/10 border-t-indigo-500 animate-spin mb-8 shadow-lg shadow-indigo-500/20" />
+              <h2 className="text-2xl font-black italic uppercase tracking-tight mb-2">Searching Drivers</h2>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Optimizing Rocket Matchmaking...</p>
             </div>
           )}
 
@@ -168,32 +161,31 @@ export default function RiderPage() {
                 mapboxToken={MAPBOX_TOKEN}
                 userCoords={userCoords}
                 drivers={[]}
-                selectedDriver={{
-                  id: activeRide.id,
-                  name: activeRide.driver_username,
-                  // Simulate Driver starting position slightly off-campus
-                  coords: [
-                    activeRide.pickup_location.coordinates[0] - 0.015,
-                    activeRide.pickup_location.coordinates[1] + 0.012
-                  ]
-                }}
+                waypoints={[
+                  activeRide.driver_coords || { 
+                    lng: activeRide.pickup_location.coordinates[0] - 0.015,
+                    lat: activeRide.pickup_location.coordinates[1] + 0.012
+                  },
+                  { lng: activeRide.pickup_location.coordinates[0], lat: activeRide.pickup_location.coordinates[1] },
+                  { lng: activeRide.dropoff_location.coordinates[0], lat: activeRide.dropoff_location.coordinates[1] }
+                ]}
               />
               
-              <div className="absolute bottom-10 left-6 right-6 z-30">
-                <div className="bg-[#1a1f33]/90 backdrop-blur-2xl border border-white/[0.1] rounded-[2rem] p-6 shadow-2xl animate-in slide-in-from-bottom duration-500">
-                   <div className="flex items-center justify-between mb-6">
-                     <div className="flex items-center gap-4">
-                       <div className="w-12 h-12 rounded-2xl bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                         <User size={24} className="text-white" />
+              <div className="absolute bottom-10 left-6 right-6 z-30 flex justify-center">
+                <div className="w-full max-w-xl bg-var(--color-bg-card) backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-8 shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
+                   <div className="flex items-center justify-between mb-8">
+                     <div className="flex items-center gap-5">
+                       <div className="w-16 h-16 rounded-[20px] bg-indigo-500 flex items-center justify-center shadow-xl shadow-indigo-500/20">
+                         <User size={32} className="text-white" />
                        </div>
                        <div>
-                         <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-0.5">Driver is coming</p>
-                         <h2 className="text-lg font-black text-white">{activeRide.driver_username || "Driver"}</h2>
+                         <p className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-[0.2em] mb-1">Incoming Match</p>
+                         <h2 className="text-2xl font-black text-white italic tracking-tight">{activeRide.driver_username || "Driver"}</h2>
                        </div>
                      </div>
                      <div className="text-right">
-                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-0.5">ETA</p>
-                        <p className="text-lg font-black text-indigo-400">6 min</p>
+                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">ETA</p>
+                        <div className="gs-btn-accent pointer-events-none py-1.5 px-4 text-sm font-black">6 MIN</div>
                      </div>
                    </div>
 
@@ -202,9 +194,9 @@ export default function RiderPage() {
                         setSearchState("idle");
                         setActiveRide(null);
                      }}
-                     className="w-full py-4 bg-white/[0.04] border border-white/[0.08] text-slate-400 font-black text-xs uppercase tracking-[0.2em] rounded-2xl transition-all hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20 active:scale-[0.98]"
+                     className="w-full py-5 bg-white/5 border border-white/10 text-slate-400 font-black text-[10px] uppercase tracking-[0.3em] rounded-2xl transition-all hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20"
                    >
-                     Cancel Ride
+                     Cancel This Ride
                    </button>
                 </div>
               </div>

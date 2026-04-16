@@ -15,29 +15,54 @@ function getAuthHeaders() {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const headers = { "Content-Type": "application/json" };
   if (token) {
-    headers["Authorization"] = `Token ${token}`;
+    headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
+}
+
+/**
+ * Unified Request Helper
+ * Automatically handles Auth headers and 401 (Unauthorized) recovery.
+ */
+async function request(endpoint, options = {}) {
+  const headers = getAuthHeaders();
+  const mergedOptions = {
+    ...options,
+    headers: {
+      ...headers,
+      ...options.headers,
+    },
+  };
+
+  const res = await fetch(`${API_BASE}${endpoint}`, mergedOptions);
+
+  if (res.status === 401) {
+    console.warn("🔒 Session expired or invalid. Redirecting to login...");
+    logout();
+    return;
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.error || `Request failed (${res.status})`);
+  }
+
+  return res.json();
 }
 
 /**
  * Authentication: Login
  */
 export async function login(username, password) {
-  const res = await fetch(`${API_BASE}/rides/auth/login/`, {
+  const data = await request("/rides/auth/login/", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.non_field_errors?.[0] || "Login failed");
+  if (data && data.tokens) {
+    localStorage.setItem("token", data.tokens.access);
+    localStorage.setItem("user", JSON.stringify(data.user));
   }
-
-  const data = await res.json();
-  localStorage.setItem("token", data.token);
-  localStorage.setItem("user", JSON.stringify(data.user));
   return data;
 }
 
@@ -45,20 +70,15 @@ export async function login(username, password) {
  * Authentication: Register
  */
 export async function register(userData) {
-  const res = await fetch(`${API_BASE}/rides/auth/register/`, {
+  const data = await request("/rides/auth/register/", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(userData),
   });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(Object.values(err)[0]?.[0] || "Registration failed");
+  if (data && data.tokens) {
+    localStorage.setItem("token", data.tokens.access);
+    localStorage.setItem("user", JSON.stringify(data.user));
   }
-
-  const data = await res.json();
-  localStorage.setItem("token", data.token);
-  localStorage.setItem("user", JSON.stringify(data.user));
   return data;
 }
 
@@ -75,12 +95,7 @@ export function logout() {
  * Fetch Current User Profile
  */
 export async function fetchProfile() {
-  const res = await fetch(`${API_BASE}/rides/auth/profile/`, {
-    headers: getAuthHeaders(),
-  });
-
-  if (!res.ok) throw new Error("Failed to fetch profile");
-  return res.json();
+  return request("/rides/auth/profile/");
 }
 
 /**
@@ -104,18 +119,10 @@ export async function createRideRequest(pickup, dropoff) {
     seats_needed: 1,
   };
 
-  const res = await fetch(`${API_BASE}/rides/requests/`, {
+  return request("/rides/requests/", {
     method: "POST",
-    headers: getAuthHeaders(),
     body: JSON.stringify(body),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to create ride request (${res.status})`);
-  }
-
-  return res.json();
 }
 
 /**
@@ -125,16 +132,7 @@ export async function createRideRequest(pickup, dropoff) {
  * @returns {Promise<object>} { ride_request_id, matches: [...] }
  */
 export async function fetchRankedMatches(rideRequestId) {
-  const res = await fetch(`${API_BASE}/matching/rank/${rideRequestId}/`, {
-    headers: getAuthHeaders(),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to fetch matches (${res.status})`);
-  }
-
-  return res.json();
+  return request(`/matching/rank/${rideRequestId}/`);
 }
 
 /**
@@ -145,21 +143,13 @@ export async function fetchRankedMatches(rideRequestId) {
  * @returns {Promise<object>} The confirmed Ride object
  */
 export async function confirmMatch(rideOfferId, rideRequestId) {
-  const res = await fetch(`${API_BASE}/matching/confirm/`, {
+  return request("/matching/confirm/", {
     method: "POST",
-    headers: getAuthHeaders(),
     body: JSON.stringify({
       ride_offer_id: rideOfferId,
       ride_request_id: rideRequestId,
     }),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to confirm match (${res.status})`);
-  }
-
-  return res.json();
 }
 
 /**
@@ -168,15 +158,7 @@ export async function confirmMatch(rideOfferId, rideRequestId) {
  * @returns {Promise<object[]>} List of RideOffer objects
  */
 export async function fetchRideOffers() {
-  const res = await fetch(`${API_BASE}/rides/offers/`, {
-    headers: getAuthHeaders(),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch offers (${res.status})`);
-  }
-
-  return res.json();
+  return request("/rides/offers/");
 }
 
 /**
@@ -185,15 +167,7 @@ export async function fetchRideOffers() {
  * @returns {Promise<object[]>}
  */
 export async function fetchPendingRequests() {
-  const res = await fetch(`${API_BASE}/rides/requests/?status=pending`, {
-    headers: getAuthHeaders(),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch pending requests (${res.status})`);
-  }
-
-  const data = await res.json();
+  const data = await request("/rides/requests/?status=pending");
   return data.results || data;
 }
 
@@ -205,17 +179,9 @@ export async function fetchPendingRequests() {
  * @returns {Promise<object>}
  */
 export async function updateRequestStatus(requestId, action) {
-  const res = await fetch(`${API_BASE}/rides/requests/${requestId}/${action}/`, {
+  return request(`/rides/requests/${requestId}/${action}/`, {
     method: "POST",
-    headers: getAuthHeaders(),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to ${action} request (${res.status})`);
-  }
-
-  return res.json();
 }
 
 /**
@@ -225,17 +191,9 @@ export async function updateRequestStatus(requestId, action) {
  * @returns {Promise<object>}
  */
 export async function completeRideRequest(requestId) {
-  const res = await fetch(`${API_BASE}/rides/requests/${requestId}/complete/`, {
+  return request(`/rides/requests/${requestId}/complete/`, {
     method: "POST",
-    headers: getAuthHeaders(),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to complete ride (${res.status})`);
-  }
-
-  return res.json();
 }
 
 /**
@@ -245,13 +203,5 @@ export async function completeRideRequest(requestId) {
  * @returns {Promise<object>}
  */
 export async function fetchRideRequestById(id) {
-  const res = await fetch(`${API_BASE}/rides/requests/${id}/`, {
-    headers: getAuthHeaders(),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ride request (${res.status})`);
-  }
-
-  return res.json();
+  return request(`/rides/requests/${id}/`);
 }

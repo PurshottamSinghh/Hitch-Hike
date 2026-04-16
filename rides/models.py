@@ -30,6 +30,7 @@ class UserProfile(models.Model):
         null=True, blank=True, help_text="Car model, plate, color"
     )
     is_online = models.BooleanField(default=False)
+    current_location = gis_models.PointField(geography=True, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

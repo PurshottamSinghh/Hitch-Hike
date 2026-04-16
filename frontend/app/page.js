@@ -12,9 +12,7 @@ export default function RootPage() {
       router.push("/login");
     } else {
       try {
-        const parsed = JSON.parse(user);
-        const role = parsed.profile?.role || "rider";
-        router.push(`/app/${role}`);
+        router.push("/app/dashboard");
       } catch (err) {
         localStorage.removeItem("user");
         router.push("/login");

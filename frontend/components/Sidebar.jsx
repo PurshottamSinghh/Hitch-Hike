@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Search,
   Car,
@@ -7,86 +8,75 @@ import {
   Trophy,
   User,
   ChevronRight,
+  LogOut
 } from "lucide-react";
+import LeaderboardModal from "./LeaderboardModal";
 
 const NAV_ITEMS = [
-  { id: "find", label: "Find Ride", icon: Search, active: true },
+  { id: "find", label: "Fleet View", icon: Search, active: true },
   { id: "offer", label: "Offer Ride", icon: Car },
   { id: "trips", label: "My Trips", icon: MapPin },
-  { id: "board", label: "Leaderboard", icon: Trophy },
   { id: "profile", label: "Profile", icon: User },
 ];
 
 export default function Sidebar() {
   return (
     <>
-      {/* ─── Desktop Sidebar (left) ─────────────────────────────────── */}
-      <aside className="hidden md:flex flex-col w-[72px] h-full bg-[#0d1117] border-r border-white/[0.06] py-6 items-center gap-1 z-30">
-        {/* Logo */}
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-extrabold text-lg mb-8 shadow-lg shadow-indigo-500/30">
-          H
-        </div>
-
-        {/* Nav icons */}
-        <nav className="flex flex-col items-center gap-1 flex-1">
+      {/* ─── Desktop Sidebar ─────────────────────────────────────────── */}
+      <aside className="fixed left-6 top-28 bottom-6 w-20 z-40 hidden lg:flex flex-col items-center py-8 gs-surface overflow-hidden">
+        {/* Nav items */}
+        <nav className="flex flex-col gap-4 w-full px-3">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.id}
                 title={item.label}
-                className={`group relative w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-200
-                  ${
-                    item.active
-                      ? "bg-indigo-500/15 text-indigo-400"
-                      : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]"
-                  }`}
+                className={`relative w-full aspect-square rounded-2xl flex items-center justify-center transition-all group
+                  ${item.active 
+                    ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/30" 
+                    : "text-slate-500 hover:text-white hover:bg-white/5"}`}
               >
-                <Icon size={20} strokeWidth={item.active ? 2.2 : 1.8} />
-                {item.active && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-indigo-500 rounded-r-full" />
-                )}
-                {/* Tooltip */}
-                <span className="absolute left-full ml-3 px-2.5 py-1 bg-slate-800 text-xs font-medium text-slate-200 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap shadow-xl">
+                <Icon size={24} strokeWidth={2.5} />
+                <span className="absolute left-full ml-4 px-3 py-1.5 bg-slate-800 text-[10px] font-black uppercase tracking-widest text-white rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all translate-x-[-10px] group-hover:translate-x-0">
                   {item.label}
-                  <ChevronRight
-                    size={10}
-                    className="absolute -left-1 top-1/2 -translate-y-1/2 text-slate-800"
-                  />
                 </span>
+                {item.active && (
+                  <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-1.5 h-8 bg-indigo-400 rounded-r-full blur-[2px]" />
+                )}
               </button>
             );
           })}
         </nav>
 
-        {/* Avatar */}
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-xs font-bold shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-110 transition-transform">
-          PS
+        {/* Bottom */}
+        <div className="mt-auto flex flex-col gap-6">
+          <button className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-all">
+            <LogOut size={20} />
+          </button>
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 border-2 border-white/20 shadow-lg" />
         </div>
       </aside>
 
       {/* ─── Mobile Bottom Bar ──────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0d1117]/95 backdrop-blur-xl border-t border-white/[0.06] flex items-center justify-around z-50 px-2">
+      <nav className="lg:hidden fixed bottom-6 left-6 right-6 h-20 gs-surface flex items-center justify-around px-4 z-[1000]">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           return (
             <button
               key={item.id}
-              className={`flex flex-col items-center gap-0.5 py-1.5 px-3 rounded-xl transition-all
-                ${
-                  item.active
-                    ? "text-indigo-400"
-                    : "text-slate-500 hover:text-slate-400"
-                }`}
+              className={`flex flex-col items-center gap-1 group
+                ${item.active ? "text-indigo-400" : "text-slate-500"}`}
             >
-              <Icon size={20} strokeWidth={item.active ? 2.2 : 1.6} />
-              <span className="text-[10px] font-medium">{item.label}</span>
-              {item.active && (
-                <span className="absolute bottom-1 w-5 h-[2px] bg-indigo-500 rounded-full" />
-              )}
+              <div className={`p-2.5 rounded-2xl transition-all ${item.active ? "bg-indigo-500/20 shadow-inner" : ""}`}>
+                <Icon size={22} strokeWidth={item.active ? 2.5 : 2} />
+              </div>
             </button>
           );
         })}
+        <button className="w-12 h-12 rounded-2xl bg-indigo-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/40">
+          <Car size={24} fill="currentColor" />
+        </button>
       </nav>
     </>
   );
