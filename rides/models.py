@@ -25,6 +25,12 @@ class UserProfile(models.Model):
     role = models.CharField(
         max_length=10, choices=ROLE_CHOICES, default="rider"
     )
+    home_address = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Onboarding home or neighborhood text (not exact coords for other users).",
+    )
     phone_number = models.CharField(max_length=20, blank=True)
     vehicle_info = models.JSONField(
         null=True, blank=True, help_text="Car model, plate, color"
@@ -41,7 +47,10 @@ class UserProfile(models.Model):
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
-        UserProfile.objects.get_or_create(user=instance)
+        UserProfile.objects.get_or_create(
+            user=instance,
+            defaults={"home_address": ""},
+        )
 
 
 @receiver(post_save, sender=User)

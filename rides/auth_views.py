@@ -2,6 +2,7 @@ from rest_framework import generics, status, permissions, views
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.gis.geos import Point
 from .serializers import RegisterSerializer, UserSerializer
@@ -51,13 +52,14 @@ class LoginView(views.APIView):
         if user is None:
             return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
         
-        # Mock SSO Check
-        valid_domains = ["@rockets.utoledo.edu", "@utoledo.edu"]
-        if not any(user.email.lower().endswith(domain) for domain in valid_domains):
-            return Response(
-                {"error": "Login restricted to UToledo accounts."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        # Mock SSO Check (skipped when DEBUG for local/dummy accounts)
+        if not getattr(settings, "DEBUG", False):
+            valid_domains = ["@rockets.utoledo.edu", "@utoledo.edu"]
+            if not any(user.email.lower().endswith(domain) for domain in valid_domains):
+                return Response(
+                    {"error": "Login restricted to UToledo accounts."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         tokens = get_tokens_for_user(user)
         return Response({

@@ -4,6 +4,7 @@ Rides serializers — Standardized for PostGIS.
 
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeometryField
+from django.conf import settings
 from django.contrib.auth.models import User
 from .models import RideOffer, RideRequest, UserProfile
 from gamification.serializers import UserStatsSerializer, UserAchievementSerializer
@@ -15,7 +16,7 @@ from gamification.serializers import UserStatsSerializer, UserAchievementSeriali
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
-        fields = ["role", "phone_number", "vehicle_info", "is_online"]
+        fields = ["role", "home_address", "phone_number", "vehicle_info", "is_online"]
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -31,13 +32,16 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=UserProfile.ROLE_CHOICES, write_only=True)
+    home_address = serializers.CharField(write_only=True, required=False, allow_blank=True, default="")
 
     class Meta:
         model = User
-        fields = ["username", "email", "password", "role"]
+        fields = ["username", "email", "password", "role", "home_address"]
 
     def validate_email(self, value):
-        """Mock SSO: Enforce @utoledo.edu or @rockets.utoledo.edu domains."""
+        """Mock SSO: Enforce @utoledo.edu or @rockets.utoledo.edu domains (skipped when DEBUG)."""
+        if getattr(settings, "DEBUG", False):
+            return value
         valid_domains = ["@rockets.utoledo.edu", "@utoledo.edu"]
         if not any(value.lower().endswith(domain) for domain in valid_domains):
             raise serializers.ValidationError(
@@ -47,6 +51,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         role = validated_data.pop("role")
+        home_address = validated_data.pop("home_address", "") or ""
         user = User.objects.create_user(
             username=validated_data["username"],
             email=validated_data.get("email", ""),
@@ -54,6 +59,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
         # Update the profile created by signal
         user.profile.role = role
+        user.profile.home_address = home_address
         user.profile.save()
         return user
 
