@@ -1,3 +1,5 @@
 from django.contrib import admin
+from .models import RideOffer, RideRequest
 
-# Register your models here.
+admin.site.register(RideOffer)
+admin.site.register(RideRequest)
