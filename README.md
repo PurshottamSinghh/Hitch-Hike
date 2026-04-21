@@ -46,6 +46,16 @@ NEXT_PUBLIC_MAPBOX_TOKEN=pk.xxx...
 SECRET_KEY=your-secure-key
 ALLOWED_HOSTS=localhost,127.0.0.1
 DEBUG=True
+
+# Campus Auth
+CAMPUS_EMAIL_DOMAINS=@rockets.utoledo.edu,@utoledo.edu
+
+# Microsoft OAuth (Outlook / Azure AD SSO)
+FRONTEND_BASE_URL=http://localhost:5173
+MICROSOFT_TENANT_ID=organizations
+MICROSOFT_CLIENT_ID=your-azure-app-client-id
+MICROSOFT_CLIENT_SECRET=your-azure-app-client-secret
+MICROSOFT_REDIRECT_URI=http://localhost:8000/api/rides/auth/microsoft/callback/
 ```
 
 > [!NOTE]

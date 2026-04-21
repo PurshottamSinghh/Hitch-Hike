@@ -10,6 +10,7 @@ This module contains the ``MatchingEngine`` class which encapsulates:
 import json
 import logging
 import re
+import math
 from typing import Any
 
 import requests
@@ -43,6 +44,9 @@ MAPBOX_MATRIX_URL = (
 MAX_MATRIX_COORDS = 25
 # Maximum detour (in seconds) before an offer is discarded from results
 MAX_DETOUR_SECONDS = 30 * 60  # 30 minutes
+# Maximum driver->pickup travel time to consider a driver "in range" of a
+# new RideRequest for the Uber-style parallel dispatch flow. 5 minutes.
+MAX_PICKUP_SECONDS = 5 * 60
 
 
 class MapboxAPIError(Exception):
@@ -192,15 +196,15 @@ class MatchingEngine:
                 f"RideRequest with id {ride_request_id} does not exist."
             )
 
-        if ride_request.status in ("matched", "accepted"):
+        if ride_request.status != "pending":
             raise MatchingError(
-                f"RideRequest #{ride_request_id} has already been matched."
+                f"RideRequest #{ride_request_id} is not pending (current: {ride_request.status})."
             )
 
         # --- Fetch active offers with at least 1 seat -------------------
         offers = RideOffer.objects.filter(
             is_active=True,
-            available_seats__gte=1,
+            available_seats__gte=ride_request.seats_needed,
         ).select_related("driver")
 
         if not offers.exists():
@@ -215,12 +219,16 @@ class MatchingEngine:
                 score = self._compute_detour(offer, ride_request)
             except MapboxAPIError:
                 logger.warning(
-                    "Skipping Offer #%d — Mapbox API error.", offer.pk
+                    "Mapbox unavailable for Offer #%d — using fallback heuristic.", offer.pk
                 )
-                continue
+                score = self._compute_detour_fallback(offer, ride_request)
 
             if score["extra_seconds"] > MAX_DETOUR_SECONDS:
                 continue
+
+            compatibility_score = max(
+                0, min(100, round(100 - (score["extra_seconds"] / MAX_DETOUR_SECONDS) * 100))
+            )
 
             results.append(
                 {
@@ -231,6 +239,7 @@ class MatchingEngine:
                     "original_duration": score["original_duration"],
                     "detoured_duration": score["detoured_duration"],
                     "extra_seconds": score["extra_seconds"],
+                    "compatibility_score": compatibility_score,
                 }
             )
 
@@ -278,6 +287,37 @@ class MatchingEngine:
 
         extra = detoured_duration - original_duration
 
+        return {
+            "original_duration": round(original_duration, 1),
+            "detoured_duration": round(detoured_duration, 1),
+            "extra_seconds": round(max(extra, 0), 1),
+        }
+
+    def _compute_detour_fallback(
+        self,
+        offer: RideOffer,
+        request: RideRequest,
+    ) -> dict[str, float]:
+        """
+        Fallback when Mapbox is unavailable.
+        Uses rough great-circle approximation and average city speed.
+        """
+        speed_m_s = 11.0  # ~25 mph average urban speed
+
+        driver_origin = _extract_coords(offer.origin)
+        driver_dest = _extract_coords(offer.destination)
+        rider_pickup = _extract_coords(request.pickup_location)
+        rider_dropoff = _extract_coords(request.dropoff_location)
+
+        original_m = _haversine_m(driver_origin, driver_dest)
+        detoured_m = (
+            _haversine_m(driver_origin, rider_pickup)
+            + _haversine_m(rider_pickup, rider_dropoff)
+            + _haversine_m(rider_dropoff, driver_dest)
+        )
+        original_duration = original_m / speed_m_s
+        detoured_duration = detoured_m / speed_m_s
+        extra = detoured_duration - original_duration
         return {
             "original_duration": round(original_duration, 1),
             "detoured_duration": round(detoured_duration, 1),
@@ -348,9 +388,13 @@ class MatchingEngine:
                     f"RideRequest with id {ride_request_id} does not exist."
                 )
 
-            if ride_request.status in ("matched", "accepted"):
+            if ride_request.status != "pending":
                 raise MatchingError(
-                    f"RideRequest #{ride_request_id} is already matched."
+                    f"RideRequest #{ride_request_id} is not pending (current: {ride_request.status})."
+                )
+            if offer.available_seats < ride_request.seats_needed:
+                raise MatchingError(
+                    f"RideOffer #{ride_offer_id} does not have enough seats."
                 )
 
             # --- Compute final detour for the confirmation record --------
@@ -375,15 +419,15 @@ class MatchingEngine:
             ride.save()
 
             # --- Decrement seats & update statuses -----------------------
-            offer.available_seats -= 1
+            offer.available_seats -= ride_request.seats_needed
             if offer.available_seats == 0:
                 offer.is_active = False
             offer.save()
 
-            # Fix: Use 'accepted' status to match frontend polling and manual acceptance
-            # Also set the driver directly on the request for immediate visibility
-            ride_request.status = "accepted"
+            # Auto-matched requests are marked as matched to separate them from manual accepts.
+            ride_request.status = "matched"
             ride_request.driver = offer.driver
+            ride_request.ride_offer = offer
             ride_request.save()
 
             logger.info(
@@ -397,3 +441,172 @@ class MatchingEngine:
             )
 
         return ride
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Driver-centric pickup-range matcher (Uber-style parallel dispatch)
+# ═══════════════════════════════════════════════════════════════════════════
+def find_eligible_drivers_for_pickup(
+    ride_request,
+    max_pickup_seconds: int = MAX_PICKUP_SECONDS,
+) -> list[dict[str, Any]]:
+    """
+    Find every driver whose *current* location is within
+    ``max_pickup_seconds`` of the rider's pickup point.
+
+    Parameters
+    ----------
+    ride_request : rides.models.RideRequest
+        The freshly-submitted rider request.
+    max_pickup_seconds : int
+        Cut-off for the driver → pickup travel-time filter.
+
+    Returns
+    -------
+    list of dict
+        Sorted ascending by ``pickup_seconds``. Each dict has keys:
+        ``driver_id``, ``driver_username``, ``pickup_seconds``,
+        ``driver_lng``, ``driver_lat``.
+    """
+    from django.contrib.auth import get_user_model
+    from rides.models import UserProfile
+
+    User = get_user_model()
+    pickup = _extract_coords(ride_request.pickup_location)
+
+    candidate_profiles = list(
+        UserProfile.objects.select_related("user")
+        .filter(
+            role="driver",
+            notify_on_ride_request=True,
+            current_location__isnull=False,
+        )
+        .exclude(user=ride_request.passenger)
+    )
+
+    if not candidate_profiles:
+        return []
+
+    # Build (driver_lng, driver_lat) list paired with profile.
+    driver_coords: list[tuple[float, float]] = []
+    for profile in candidate_profiles:
+        lng, lat = _extract_coords(profile.current_location)
+        driver_coords.append((lng, lat))
+
+    # Ask Mapbox for all driver -> pickup durations in a single Matrix call.
+    # Layout: [pickup, driver_0, driver_1, ...]; sources=[0]; destinations=[1..N]
+    durations: list[float | None] = []
+    try:
+        # Mapbox Matrix API supports up to 25 coordinates.
+        # Chunk if more candidates than that.
+        remaining = list(driver_coords)
+        while remaining:
+            chunk = remaining[: MAX_MATRIX_COORDS - 1]
+            remaining = remaining[MAX_MATRIX_COORDS - 1 :]
+
+            coords = [pickup] + chunk
+            coords_str = ";".join(f"{lng},{lat}" for lng, lat in coords)
+            dest_indices = ";".join(str(i + 1) for i in range(len(chunk)))
+
+            url = f"{MAPBOX_MATRIX_URL}/{coords_str}"
+            params = {
+                "access_token": settings.MAPBOX_SECRET_TOKEN,
+                "annotations": "duration",
+                "sources": "0",
+                "destinations": dest_indices,
+            }
+            res = requests.get(url, params=params, timeout=15)
+            res.raise_for_status()
+            data = res.json()
+            if data.get("code") != "Ok":
+                raise MapboxAPIError(data.get("message") or "Matrix error")
+
+            # durations is a sources x destinations matrix; we only asked
+            # for one source so it's a single row.
+            row = (data.get("durations") or [[]])[0]
+            durations.extend(row)
+    except (requests.RequestException, MapboxAPIError, ValueError) as exc:
+        logger.warning(
+            "Mapbox Matrix pickup-matrix failed (%s); falling back to haversine.",
+            exc,
+        )
+        durations = []
+        speed_m_s = 11.0
+        for lng, lat in driver_coords:
+            meters = _haversine_m((lng, lat), pickup)
+            durations.append(meters / speed_m_s)
+
+    eligible: list[dict[str, Any]] = []
+    for profile, (lng, lat), duration in zip(candidate_profiles, driver_coords, durations):
+        if duration is None:
+            continue
+        if duration > max_pickup_seconds:
+            continue
+        eligible.append(
+            {
+                "driver_id": profile.user_id,
+                "driver_username": profile.user.username,
+                "pickup_seconds": round(float(duration), 1),
+                "driver_lng": lng,
+                "driver_lat": lat,
+            }
+        )
+
+    eligible.sort(key=lambda d: d["pickup_seconds"])
+    return eligible
+
+
+def estimate_driving_duration(
+    origin: tuple[float, float],
+    destination: tuple[float, float],
+) -> float:
+    """
+    Rough driving-duration estimate (in seconds) between two (lng, lat)
+    points. Tries Mapbox Directions first and falls back to a haversine /
+    mean-speed approximation (11 m/s ≈ 40 km/h) on any network/token error.
+
+    Used by the proactive-schedule offer flow to compute the driver's
+    "leave by" time so the rider is picked up before class.
+    """
+    token = getattr(settings, "MAPBOX_SECRET_TOKEN", "") or ""
+    if token:
+        try:
+            coords = f"{origin[0]},{origin[1]};{destination[0]},{destination[1]}"
+            url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{coords}"
+            params = {
+                "access_token": token,
+                "overview": "false",
+                "alternatives": "false",
+                "geometries": "geojson",
+            }
+            res = requests.get(url, params=params, timeout=15)
+            res.raise_for_status()
+            data = res.json()
+            if data.get("code") == "Ok":
+                routes = data.get("routes") or []
+                if routes and routes[0].get("duration") is not None:
+                    return float(routes[0]["duration"])
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning(
+                "Mapbox Directions estimate failed (%s); falling back to haversine.",
+                exc,
+            )
+    meters = _haversine_m(origin, destination)
+    return meters / 11.0
+
+
+def _haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance in meters between two (lng, lat) points."""
+    lng1, lat1 = a
+    lng2, lat2 = b
+    r = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+
+    h = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * r * math.atan2(math.sqrt(h), math.sqrt(1 - h))
