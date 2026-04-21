@@ -9,7 +9,7 @@ import * as api from "@/lib/api";
 export const badges = [
   {
     id: "b1",
-    name: "First Loop",
+    name: "First Hitch",
     description: "Completed your first ride",
     icon: "🌀",
     earned: true,
@@ -44,7 +44,7 @@ export const badges = [
 
 export const Route = createFileRoute("/rewards")({
   head: () => ({
-    meta: [{ title: "Rewards — Loop" }],
+    meta: [{ title: "Rewards — Hitch-Hike" }],
   }),
   component: Rewards,
 });

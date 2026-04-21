@@ -1,18 +1,18 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { ArrowRight, Shield, Sparkles, Leaf } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../lib/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Loop — Carpool, only at UToledo" },
+      { title: "Hitch-Hike — Carpool, only at UToledo" },
       {
         name: "description",
         content:
           "Verified-student carpooling for the University of Toledo. Match by schedule, save money, build community.",
       },
-      { property: "og:title", content: "Loop — Carpool, only at UToledo" },
+      { property: "og:title", content: "Hitch-Hike — Carpool, only at UToledo" },
       {
         property: "og:description",
         content: "A premium, verified-student carpool community for UToledo.",
@@ -28,6 +28,23 @@ function Landing() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const router = useRouter();
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      const result = await api.finishMicrosoftAuthFromUrl();
+      if (!isMounted || !result.handled) return;
+      if (result.success) {
+        router.navigate({ to: "/home" });
+        return;
+      }
+      setMode("login");
+      setError(result.error || "Microsoft sign-in failed.");
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,7 +75,7 @@ function Landing() {
           <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-aurora shadow-glow">
             <span className="h-3.5 w-3.5 rounded-full border-[2.5px] border-primary-foreground" />
           </span>
-          <span className="text-[16px] font-bold tracking-tight text-foreground">Loop</span>
+          <span className="text-[16px] font-bold tracking-tight text-foreground">Hitch-Hike</span>
           <span className="ml-auto rounded-full border border-border bg-surface/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur-md">
             UToledo only
           </span>
@@ -117,11 +134,17 @@ function Landing() {
           {mode === "start" ? (
             <>
               <button
-                onClick={() => setMode("login")}
+                onClick={() => api.beginMicrosoftAuth("/")}
                 className="group flex w-full items-center justify-center gap-2 rounded-2xl bg-foreground py-4 text-[14px] font-semibold text-background shadow-elevated transition-transform hover:scale-[1.01] active:scale-[0.99]"
               >
-                <GoogleMark />
-                Continue with @utoledo.edu
+                <MicrosoftMark />
+                Continue with Microsoft
+              </button>
+              <button
+                onClick={() => setMode("login")}
+                className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-2xl border border-border bg-surface/70 py-3.5 text-[13px] font-semibold text-foreground backdrop-blur-md transition-colors hover:bg-surface"
+              >
+                Use username/password <ArrowRight className="h-3.5 w-3.5" />
               </button>
               <Link
                 to="/onboarding"
@@ -136,8 +159,8 @@ function Landing() {
               className="space-y-3 animate-in fade-in slide-in-from-bottom-2"
             >
               <input
-                type="email"
-                placeholder="Rocket Email (@rockets.utoledo.edu)"
+                type="text"
+                placeholder="Username or Rocket Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-2xl border border-border bg-surface p-4 text-[14px] outline-none transition-colors focus:border-primary"
@@ -171,7 +194,7 @@ function Landing() {
           )}
 
           <p className="mt-6 text-center text-[10px] text-muted-foreground">
-            By continuing you agree to Loop's community standards.
+            By continuing you agree to Hitch-Hike community standards.
           </p>
         </div>
       </div>
@@ -179,25 +202,14 @@ function Landing() {
   );
 }
 
-function GoogleMark() {
+function MicrosoftMark() {
   return (
-    <svg viewBox="0 0 48 48" className="h-4 w-4" aria-hidden>
-      <path
-        fill="#FFC107"
-        d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"
-      />
-      <path
-        fill="#FF3D00"
-        d="M6.3 14.1l6.6 4.8C14.7 15.1 19 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.1z"
-      />
-      <path
-        fill="#4CAF50"
-        d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.4-4.5 2.4-7.2 2.4-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.5 16.2 44 24 44z"
-      />
-      <path
-        fill="#1976D2"
-        d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.6l6.2 5.2C40.8 35.6 44 30.3 44 24c0-1.3-.1-2.3-.4-3.5z"
-      />
+    <svg viewBox="0 0 21 21" className="h-4 w-4" aria-hidden>
+      <rect x="1" y="1" width="9" height="9" fill="#f35325" />
+      <rect x="11" y="1" width="9" height="9" fill="#81bc06" />
+      <rect x="1" y="11" width="9" height="9" fill="#05a6f0" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffba08" />
     </svg>
   );
 }
+

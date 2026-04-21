@@ -5,10 +5,11 @@ import { PhoneFrame, Avatar } from "@/components/app-shell";
 import { BottomNav } from "@/components/bottom-nav";
 import { RoutePreviewSVG } from "@/components/ride-card";
 import { cn } from "@/lib/utils";
+import * as api from "@/lib/api";
 
 export const Route = createFileRoute("/create")({
   head: () => ({
-    meta: [{ title: "Create a ride — Loop" }],
+    meta: [{ title: "Create a ride — Hitch-Hike" }],
   }),
   component: Create,
 });
@@ -23,10 +24,62 @@ function Create() {
   const [to, setTo] = useState("Main Campus");
   const [time, setTime] = useState("8:30 AM");
   const [seats, setSeats] = useState(3);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
-  const next = () => {
+  const next = async () => {
+    if (isSubmitting) return;
     if (step < 2) setStep(step + 1);
-    else navigate({ to: "/home" });
+    else {
+      setError("");
+      setInfo("");
+      setIsSubmitting(true);
+
+      try {
+        const fromCoords = inferToledoCoords(from, [-83.61, 41.66]);
+        const toCoords = inferToledoCoords(to, [-83.55, 41.66]);
+        const departureIso = toTodayIso(time);
+
+        if (mode === "driver") {
+          const offer = await api.createRideOffer({
+            origin: { lng: fromCoords[0], lat: fromCoords[1] },
+            destination: { lng: toCoords[0], lat: toCoords[1] },
+            departureTimeIso: departureIso,
+            availableSeats: seats,
+          });
+
+          navigate({ to: `/ride/${offer.id}` });
+          return;
+        }
+
+        const request = await api.createRideRequest(
+          { lng: fromCoords[0], lat: fromCoords[1] },
+          { lng: toCoords[0], lat: toCoords[1] },
+          { desiredTimeIso: departureIso, seatsNeeded: 1 },
+        );
+
+        try {
+          const ranked = await api.fetchRankedMatches(request.id);
+          const bestMatch = ranked?.matches?.[0];
+          if (bestMatch) {
+            setInfo(
+              `Request posted. Best available match is ${bestMatch.compatibility_score ?? "?"}% compatible.`,
+            );
+          } else {
+            setInfo("Ride request posted. Waiting for driver acceptance.");
+          }
+        } catch {
+          // Ranking can fail when Mapbox server token is not set; request is still created.
+          setInfo("Ride request posted. Waiting for driver acceptance.");
+        }
+        navigate({ to: "/home" });
+      } catch (err: any) {
+        setError(err?.message || "Failed to publish ride.");
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
   };
 
   return (
@@ -209,11 +262,13 @@ function Create() {
         </button>
         <button
           onClick={next}
+          disabled={isSubmitting}
           className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3.5 text-[14px] font-semibold text-primary-foreground shadow-glow transition-transform hover:scale-[1.02] active:scale-95"
         >
           {step === 2 ? (
             <>
-              Publish ride <Check className="h-4 w-4" strokeWidth={3} />
+              {isSubmitting ? "Publishing..." : "Publish ride"}{" "}
+              {!isSubmitting && <Check className="h-4 w-4" strokeWidth={3} />}
             </>
           ) : (
             <>
@@ -222,8 +277,35 @@ function Create() {
           )}
         </button>
       </div>
+      {error && <p className="mt-3 text-right text-[12px] text-destructive">{error}</p>}
+      {!error && info && <p className="mt-3 text-right text-[12px] text-success">{info}</p>}
     </PhoneFrame>
   );
+}
+
+function inferToledoCoords(input: string, fallback: [number, number]): [number, number] {
+  const normalized = input.toLowerCase();
+  if (normalized.includes("westgate")) return [-83.623, 41.676];
+  if (normalized.includes("main campus") || normalized.includes("bancroft")) return [-83.612, 41.657];
+  if (normalized.includes("sylvania")) return [-83.699, 41.709];
+  if (normalized.includes("tower view")) return [-83.545, 41.716];
+  return fallback;
+}
+
+function toTodayIso(timeText: string): string {
+  const now = new Date();
+  const match = timeText.trim().match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (!match) return now.toISOString();
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const period = match[3].toUpperCase();
+
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+
+  const departure = new Date(now);
+  departure.setHours(hour, minute, 0, 0);
+  return departure.toISOString();
 }
 
 function Field({

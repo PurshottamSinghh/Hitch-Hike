@@ -1,21 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Sparkles, Trash2 } from "lucide-react";
 import { PhoneFrame, Pill, SectionHeader } from "@/components/app-shell";
 import { BottomNav } from "@/components/bottom-nav";
-// Schedule data inlined temporarily since backend doesn't handle class schedules yet
 import { cn } from "@/lib/utils";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as api from "@/lib/api";
 
 export const Route = createFileRoute("/schedule")({
   head: () => ({
-    meta: [{ title: "Schedule — Loop" }],
+    meta: [{ title: "Schedule — Hitch-Hike" }],
   }),
   component: Schedule,
 });
 
 const DAYS = ["M", "T", "W", "T", "F"];
-export type ClassBlock = {
+type ClassBlock = {
   id: string;
+  scheduleId: number;
   course: string;
   code: string;
   day: 0 | 1 | 2 | 3 | 4;
@@ -24,80 +26,72 @@ export type ClassBlock = {
   room: string;
   hasMatch?: boolean;
 };
-
-export const classBlocks: ClassBlock[] = [
-  {
-    id: "c1",
-    course: "Algorithms",
-    code: "CSE 3500",
-    day: 0,
-    startMin: 9 * 60,
-    endMin: 10 * 60 + 15,
-    room: "NI 1043",
-    hasMatch: true,
-  },
-  {
-    id: "c2",
-    course: "Linear Algebra",
-    code: "MATH 2890",
-    day: 0,
-    startMin: 11 * 60,
-    endMin: 12 * 60 + 15,
-    room: "UH 4040",
-  },
-  {
-    id: "c3",
-    course: "Software Eng.",
-    code: "CSE 4214",
-    day: 1,
-    startMin: 10 * 60,
-    endMin: 11 * 60 + 30,
-    room: "PL 1140",
-    hasMatch: true,
-  },
-  {
-    id: "c4",
-    course: "Tech Comm.",
-    code: "ENGL 2950",
-    day: 2,
-    startMin: 9 * 60,
-    endMin: 10 * 60 + 15,
-    room: "FH 2400",
-  },
-  {
-    id: "c5",
-    course: "Algorithms",
-    code: "CSE 3500",
-    day: 2,
-    startMin: 14 * 60,
-    endMin: 15 * 60 + 15,
-    room: "NI 1043",
-  },
-  {
-    id: "c6",
-    course: "Software Eng.",
-    code: "CSE 4214",
-    day: 3,
-    startMin: 10 * 60,
-    endMin: 11 * 60 + 30,
-    room: "PL 1140",
-    hasMatch: true,
-  },
-  {
-    id: "c7",
-    course: "Lab — Networks",
-    code: "CSE 3550",
-    day: 4,
-    startMin: 13 * 60,
-    endMin: 15 * 60,
-    room: "NI 2090",
-  },
-];
 const DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const HOURS = Array.from({ length: 11 }, (_, i) => 8 + i); // 8am..6pm
 
 function Schedule() {
+  const queryClient = useQueryClient();
   const [day, setDay] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    course_name: "",
+    course_code: "",
+    day_of_week: "mon" as "mon" | "tue" | "wed" | "thu" | "fri",
+    start_time: "09:00",
+    end_time: "10:15",
+    location: "",
+  });
+
+  const { data: schedules = [], isLoading } = useQuery({
+    queryKey: ["classSchedules"],
+    queryFn: api.fetchClassSchedules,
+  });
+
+  const createScheduleMutation = useMutation({
+    mutationFn: api.createClassSchedule,
+    onSuccess: async () => {
+      setError("");
+      setShowAddForm(false);
+      setForm({
+        course_name: "",
+        course_code: "",
+        day_of_week: "mon",
+        start_time: "09:00",
+        end_time: "10:15",
+        location: "",
+      });
+      await queryClient.invalidateQueries({ queryKey: ["classSchedules"] });
+    },
+    onError: (err: any) => {
+      setError(err?.message || "Could not save class.");
+    },
+  });
+
+  const deleteScheduleMutation = useMutation({
+    mutationFn: api.deleteClassSchedule,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["classSchedules"] });
+    },
+  });
+
+  const classBlocks: ClassBlock[] = schedules
+    .map((schedule) => {
+      const dayIndex = dayToIndex(schedule.day_of_week);
+      if (dayIndex === null) return null;
+      return {
+        id: `c${schedule.id}`,
+        scheduleId: schedule.id,
+        course: schedule.course_name,
+        code: schedule.course_code || "Course",
+        day: dayIndex,
+        startMin: timeToMinutes(schedule.start_time),
+        endMin: timeToMinutes(schedule.end_time),
+        room: schedule.location || "TBD",
+        hasMatch: false,
+      } as ClassBlock;
+    })
+    .filter(Boolean) as ClassBlock[];
   const blocks = classBlocks.filter((b) => b.day === day);
 
   return (
@@ -161,13 +155,95 @@ function Schedule() {
             available
           </p>
         </div>
-        <button className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-2 text-[12px] font-semibold text-primary-foreground shadow-glow">
+        <button
+          onClick={() => setShowAddForm((prev) => !prev)}
+          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-2 text-[12px] font-semibold text-primary-foreground shadow-glow"
+        >
           <Plus className="h-3.5 w-3.5" /> Add class
         </button>
       </div>
 
+      {showAddForm && (
+        <div className="mt-4 rounded-2xl border border-border bg-surface p-4 shadow-soft space-y-2">
+          <input
+            value={form.course_name}
+            onChange={(e) => setForm((prev) => ({ ...prev, course_name: e.target.value }))}
+            placeholder="Course name"
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-[13px] outline-none focus:border-primary"
+          />
+          <input
+            value={form.course_code}
+            onChange={(e) => setForm((prev) => ({ ...prev, course_code: e.target.value }))}
+            placeholder="Course code"
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-[13px] outline-none focus:border-primary"
+          />
+          <div className="grid grid-cols-3 gap-2">
+            <select
+              value={form.day_of_week}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  day_of_week: e.target.value as "mon" | "tue" | "wed" | "thu" | "fri",
+                }))
+              }
+              className="rounded-xl border border-border bg-background px-2 py-2 text-[13px] outline-none focus:border-primary"
+            >
+              <option value="mon">Mon</option>
+              <option value="tue">Tue</option>
+              <option value="wed">Wed</option>
+              <option value="thu">Thu</option>
+              <option value="fri">Fri</option>
+            </select>
+            <input
+              type="time"
+              value={form.start_time}
+              onChange={(e) => setForm((prev) => ({ ...prev, start_time: e.target.value }))}
+              className="rounded-xl border border-border bg-background px-2 py-2 text-[13px] outline-none focus:border-primary"
+            />
+            <input
+              type="time"
+              value={form.end_time}
+              onChange={(e) => setForm((prev) => ({ ...prev, end_time: e.target.value }))}
+              className="rounded-xl border border-border bg-background px-2 py-2 text-[13px] outline-none focus:border-primary"
+            />
+          </div>
+          <input
+            value={form.location}
+            onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))}
+            placeholder="Location (optional)"
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-[13px] outline-none focus:border-primary"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setShowAddForm(false)}
+              className="rounded-xl border border-border px-3 py-2 text-[12px] font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setError("");
+                if (!form.course_name.trim()) {
+                  setError("Course name is required.");
+                  return;
+                }
+                createScheduleMutation.mutate(form);
+              }}
+              disabled={createScheduleMutation.isPending}
+              className="rounded-xl bg-primary px-3 py-2 text-[12px] font-semibold text-primary-foreground"
+            >
+              {createScheduleMutation.isPending ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {error && <p className="text-[12px] text-destructive">{error}</p>}
+        </div>
+      )}
+
       {/* Day grid */}
       <div className="relative mt-4 rounded-3xl border border-border bg-surface p-3 shadow-soft">
+        {isLoading && (
+          <p className="px-2 pb-3 text-[12px] text-muted-foreground">Loading schedule...</p>
+        )}
         <div className="relative" style={{ height: `${HOURS.length * 56}px` }}>
           {/* hour lines */}
           {HOURS.map((h, i) => (
@@ -192,13 +268,20 @@ function Schedule() {
               <div
                 key={b.id}
                 className={cn(
-                  "absolute left-12 right-2 overflow-hidden rounded-2xl border p-3 shadow-soft transition-all hover:-translate-y-0.5",
+                  "absolute left-12 right-2 overflow-hidden rounded-2xl border p-3 pr-9 shadow-soft transition-all hover:-translate-y-0.5",
                   b.hasMatch
                     ? "border-accent/30 bg-gradient-to-br from-accent/12 to-accent/5"
                     : "border-primary/20 bg-gradient-to-br from-primary/10 to-primary/4",
                 )}
                 style={{ top: `${top}px`, height: `${height}px` }}
               >
+                <button
+                  onClick={() => deleteScheduleMutation.mutate(b.scheduleId)}
+                  title="Remove class"
+                  className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-bold tracking-tight text-foreground">
@@ -252,4 +335,20 @@ function fmt(min: number) {
   const ampm = h >= 12 ? "p" : "a";
   const hh = h > 12 ? h - 12 : h;
   return `${hh}:${m.toString().padStart(2, "0")}${ampm}`;
+}
+
+function timeToMinutes(value: string) {
+  const [h, m] = value.split(":").map((v) => Number(v));
+  return (h || 0) * 60 + (m || 0);
+}
+
+function dayToIndex(day: string): 0 | 1 | 2 | 3 | 4 | null {
+  const map: Record<string, 0 | 1 | 2 | 3 | 4> = {
+    mon: 0,
+    tue: 1,
+    wed: 2,
+    thu: 3,
+    fri: 4,
+  };
+  return map[day] ?? null;
 }

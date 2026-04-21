@@ -8,11 +8,12 @@ import { DispatchModal } from "@/components/dispatch-modal";
 import { useRouter } from "@tanstack/react-router";
 import { formatTime, formatRelativeTime } from "@/lib/utils";
 import * as api from "@/lib/api";
+import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/home")({
   head: () => ({
     meta: [
-      { title: "Home — Loop" },
+      { title: "Home — Hitch-Hike" },
       {
         name: "description",
         content: "Your daily carpool dashboard for the University of Toledo.",
@@ -24,6 +25,7 @@ export const Route = createFileRoute("/home")({
 
 function Home() {
   const router = useRouter();
+  const [dismissedRequestId, setDismissedRequestId] = useState<number | null>(null);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
@@ -35,6 +37,11 @@ function Home() {
   const { data: pendingRequests = [], refetch: refetchRequests } = useQuery({
     queryKey: ["pendingRequests"],
     queryFn: api.fetchPendingRequests,
+    refetchInterval: 3000,
+  });
+  const { data: myRideRequests = [], refetch: refetchMyRequests } = useQuery({
+    queryKey: ["myRideRequests"],
+    queryFn: api.fetchMyRideRequests,
     refetchInterval: 3000,
   });
 
@@ -56,6 +63,24 @@ function Home() {
 
   const upcomingRide = offers.length > 0 ? offers[0] : null;
   const suggestedRides = offers.slice(1, 3);
+  const firstPendingRequest =
+    pendingRequests.find((r: any) => r.id !== dismissedRequestId) || pendingRequests[0] || null;
+  const riderActiveRequest =
+    myRideRequests.find(
+      (r: any) =>
+        r.passenger_username === rawProfile.username &&
+        ["pending", "accepted", "matched"].includes(r.status),
+    ) || null;
+  const driverActiveRequest =
+    myRideRequests.find(
+      (r: any) =>
+        r.driver_username === rawProfile.username &&
+        ["accepted", "matched"].includes(r.status),
+    ) || null;
+
+  useEffect(() => {
+    if (!firstPendingRequest) setDismissedRequestId(null);
+  }, [firstPendingRequest]);
 
   return (
     <PhoneFrame>
@@ -87,6 +112,44 @@ function Home() {
           </Link>
         </div>
       </header>
+
+      {rawProfile?.profile?.role !== "driver" && riderActiveRequest && (
+        <section className="mt-4 rounded-2xl border border-primary/30 bg-primary/10 p-4 shadow-soft">
+          <p className="text-[12px] font-semibold text-primary">
+            {riderActiveRequest.status === "pending"
+              ? "Request sent. Waiting for a driver."
+              : "Your request was accepted. Be ready for pickup."}
+          </p>
+          <button
+            onClick={() =>
+              router.navigate({
+                to: `/ride/${riderActiveRequest.ride_offer || riderActiveRequest.id}`,
+              })
+            }
+            className="mt-2 text-[12px] font-semibold text-foreground underline"
+          >
+            View ride status
+          </button>
+        </section>
+      )}
+
+      {rawProfile?.profile?.role === "driver" && driverActiveRequest && (
+        <section className="mt-4 rounded-2xl border border-accent/30 bg-accent/10 p-4 shadow-soft">
+          <p className="text-[12px] font-semibold text-foreground">
+            Rider request accepted. Coordinate pickup and complete the ride when done.
+          </p>
+          <button
+            onClick={() =>
+              router.navigate({
+                to: `/ride/${driverActiveRequest.ride_offer || driverActiveRequest.id}`,
+              })
+            }
+            className="mt-2 text-[12px] font-semibold text-foreground underline"
+          >
+            Open active ride
+          </button>
+        </section>
+      )}
 
       {/* Upcoming ride hero */}
       <section className="mt-6">
@@ -248,30 +311,35 @@ function Home() {
       </section>
 
       {/* Dispatch Modal for Drivers */}
-      {rawProfile?.role === "driver" && pendingRequests.length > 0 && (
+      {rawProfile?.profile?.role === "driver" && firstPendingRequest && (
         <DispatchModal
           isOpen={true}
           request={{
-            id: pendingRequests[0].id,
-            username: pendingRequests[0].rider_username || "Rider",
-            initials: (pendingRequests[0].rider_username || "RD").substring(0, 2).toUpperCase(),
+            id: firstPendingRequest.id,
+            username: firstPendingRequest.rider_username || "Rider",
+            initials: (firstPendingRequest.rider_username || "RD").substring(0, 2).toUpperCase(),
             pickupString: "Current Location",
             dropoffString: "Destination",
-            desiredTime: pendingRequests[0].desired_time,
-            seatsNeeded: pendingRequests[0].seats_needed || 1,
+            desiredTime: firstPendingRequest.desired_time,
+            seatsNeeded: firstPendingRequest.seats_needed || 1,
             major: "Student",
             rating: 5.0,
           }}
           onAccept={async (id) => {
-            await api.updateRequestStatus(id, "accept");
+            const accepted = await api.updateRequestStatus(id, "accept");
             refetchRequests();
-            router.navigate({ to: `/ride/${id}` });
+            refetchMyRequests();
+            setDismissedRequestId(null);
+            const rideId = accepted?.ride_offer_id ?? id;
+            router.navigate({ to: `/ride/${rideId}` });
           }}
           onReject={async (id) => {
             await api.updateRequestStatus(id, "reject");
             refetchRequests();
+            refetchMyRequests();
+            setDismissedRequestId(null);
           }}
-          onClose={() => {}}
+          onClose={() => setDismissedRequestId(firstPendingRequest.id)}
         />
       )}
     </PhoneFrame>

@@ -7,8 +7,8 @@ import * as api from "../lib/api";
 export const Route = createFileRoute("/onboarding")({
   head: () => ({
     meta: [
-      { title: "Welcome — Loop" },
-      { name: "description", content: "Set up your Loop account in seconds." },
+      { title: "Welcome — Hitch-Hike" },
+      { name: "description", content: "Set up your Hitch-Hike account in seconds." },
     ],
   }),
   component: Onboarding,
@@ -25,10 +25,12 @@ function Onboarding() {
   const [address, setAddress] = useState("");
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const steps = ["Name", "Address", "Role"];
+  const emailLooksCampus = isCampusEmail(email);
   const canNext =
-    (step === 0 && name.trim().length > 1 && email.includes("@") && password.length >= 8) ||
+    (step === 0 && name.trim().length > 1 && emailLooksCampus && password.length >= 8) ||
     (step === 1 && address.trim().length > 3) ||
     (step === 2 && role !== null);
 
@@ -37,6 +39,7 @@ function Onboarding() {
     else {
       try {
         setLoading(true);
+        setError("");
         // API only accepts "driver" | "rider". Map UI "both" to rider (can change in profile later).
         const backendRole = role === "driver" ? "driver" : "rider";
         await api.register({
@@ -48,7 +51,7 @@ function Onboarding() {
         });
         navigate({ to: "/home" });
       } catch (err: any) {
-        alert(err.message || "Failed to register.");
+        setError(err.message || "Failed to register.");
       } finally {
         setLoading(false);
       }
@@ -84,7 +87,7 @@ function Onboarding() {
           {step === 0 && (
             <div className="animate-rise">
               <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
-                Welcome to Loop
+                Welcome to Hitch-Hike
               </p>
               <h1 className="mt-2 text-balance text-[32px] font-bold leading-[1.1] tracking-tight text-foreground">
                 What should we call you?
@@ -106,6 +109,11 @@ function Onboarding() {
                 placeholder="School Email (@utoledo.edu)"
                 className="mt-4 w-full border-0 border-b-2 border-border bg-transparent pb-3 text-[18px] tracking-tight outline-none transition-colors focus:border-primary"
               />
+              {email.length > 0 && !emailLooksCampus && (
+                <p className="mt-2 text-[12px] text-destructive">
+                  Please use your `@utoledo.edu` or `@rockets.utoledo.edu` email.
+                </p>
+              )}
               <input
                 type="password"
                 value={password}
@@ -163,7 +171,7 @@ function Onboarding() {
                 Step 03
               </p>
               <h1 className="mt-2 text-balance text-[32px] font-bold leading-[1.1] tracking-tight text-foreground">
-                How will you Loop?
+                How will you commute?
               </h1>
               <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
                 You can change this anytime. Most students choose Both.
@@ -250,11 +258,21 @@ function Onboarding() {
                 : "bg-muted text-muted-foreground",
             )}
           >
-            {loading ? "Loading..." : step === 2 ? "Enter Loop" : "Continue"}
+            {loading ? "Loading..." : step === 2 ? "Enter Hitch-Hike" : "Continue"}
             {!loading && <ArrowRight className="h-4 w-4" />}
           </button>
         </div>
+        {error && (
+          <p className="mt-3 text-right text-[12px] text-destructive">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );
+}
+
+function isCampusEmail(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.endsWith("@utoledo.edu") || normalized.endsWith("@rockets.utoledo.edu");
 }

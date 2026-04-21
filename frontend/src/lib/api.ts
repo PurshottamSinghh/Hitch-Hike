@@ -140,6 +140,59 @@ export async function login(username: string, password: string) {
 }
 
 /**
+ * Redirect browser to backend Microsoft OAuth start endpoint.
+ */
+export function beginMicrosoftAuth(nextPath = "/") {
+  const safeNext = nextPath.startsWith("/") ? nextPath : "/";
+  const target = `${API_BASE}/rides/auth/microsoft/start/?next=${encodeURIComponent(safeNext)}`;
+  window.location.href = target;
+}
+
+/**
+ * Hydrate local auth from URL hash after OAuth callback.
+ */
+export async function finishMicrosoftAuthFromUrl() {
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  if (!hash) return { handled: false as const };
+
+  const params = new URLSearchParams(hash);
+  const access = params.get("access");
+  const refresh = params.get("refresh");
+  const oauthError = params.get("oauth_error");
+
+  if (!access && !oauthError) return { handled: false as const };
+
+  // Clean URL as early as possible.
+  window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+
+  if (oauthError) {
+    return { handled: true as const, success: false as const, error: oauthError };
+  }
+
+  if (!access) {
+    return { handled: true as const, success: false as const, error: "Missing access token." };
+  }
+
+  localStorage.setItem("token", access);
+  if (refresh) localStorage.setItem("refresh_token", refresh);
+
+  try {
+    const user = await fetchProfile();
+    localStorage.setItem("user", JSON.stringify(user));
+    return { handled: true as const, success: true as const };
+  } catch (err: any) {
+    logout();
+    return {
+      handled: true as const,
+      success: false as const,
+      error: err?.message || "SSO login failed after callback.",
+    };
+  }
+}
+
+/**
  * Authentication: Register
  */
 export async function register(userData: {
@@ -169,6 +222,7 @@ export async function register(userData: {
  */
 export function logout() {
   localStorage.removeItem("token");
+  localStorage.removeItem("refresh_token");
   localStorage.removeItem("user");
   window.location.href = "/";
 }
@@ -181,11 +235,35 @@ export async function fetchProfile() {
 }
 
 /**
+ * Update current user profile fields.
+ */
+export async function updateProfile(payload: {
+  username?: string;
+  email?: string;
+  role?: "driver" | "rider";
+  home_address?: string;
+  phone_number?: string;
+}) {
+  const data = await request<any>("/rides/auth/profile/", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  localStorage.setItem("user", JSON.stringify(data));
+  return data;
+}
+
+/**
  * Create a RideRequest in the database.
  */
 export async function createRideRequest(
   pickup: { lng: number; lat: number },
   dropoff: { lng: number; lat: number },
+  options?: {
+    desiredTimeIso?: string;
+    seatsNeeded?: number;
+    rideOfferId?: number;
+    notes?: string;
+  },
 ) {
   const body = {
     pickup_location: {
@@ -196,11 +274,45 @@ export async function createRideRequest(
       type: "Point",
       coordinates: [dropoff.lng, dropoff.lat],
     },
-    desired_time: new Date().toISOString(),
-    seats_needed: 1,
+    desired_time: options?.desiredTimeIso || new Date().toISOString(),
+    seats_needed: options?.seatsNeeded || 1,
+    ride_offer: options?.rideOfferId,
+    notes: options?.notes || "",
   };
 
   return request<any>("/rides/requests/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Create a RideOffer in the database.
+ */
+export async function createRideOffer(payload: {
+  origin: { lng: number; lat: number };
+  destination: { lng: number; lat: number };
+  departureTimeIso: string;
+  availableSeats: number;
+  pricePerSeat?: number;
+  notes?: string;
+}) {
+  const body = {
+    origin: {
+      type: "Point",
+      coordinates: [payload.origin.lng, payload.origin.lat],
+    },
+    destination: {
+      type: "Point",
+      coordinates: [payload.destination.lng, payload.destination.lat],
+    },
+    departure_time: payload.departureTimeIso,
+    available_seats: payload.availableSeats,
+    price_per_seat: payload.pricePerSeat ?? 3.5,
+    notes: payload.notes ?? "",
+  };
+
+  return request<any>("/rides/offers/", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -242,6 +354,16 @@ export async function fetchPendingRequests() {
   return data.results || data;
 }
 
+export async function fetchOfferRequests(offerId: number | string) {
+  const data = await request<unknown>(`/rides/offers/${offerId}/requests/`);
+  return unwrapList<any>(data);
+}
+
+export async function fetchMyRideRequests() {
+  const data = await request<any>("/rides/requests/");
+  return data.results || data;
+}
+
 /**
  * Accept or Reject a ride request.
  */
@@ -256,6 +378,12 @@ export async function updateRequestStatus(requestId: number, action: "accept" | 
  */
 export async function completeRideRequest(requestId: number) {
   return request<any>(`/rides/requests/${requestId}/complete/`, {
+    method: "POST",
+  });
+}
+
+export async function cancelRideRequest(requestId: number) {
+  return request<any>(`/rides/requests/${requestId}/cancel/`, {
     method: "POST",
   });
 }
@@ -281,4 +409,39 @@ export async function fetchLeaderboard() {
 export async function fetchGroups() {
   const data = await request<unknown>("/gamification/groups/");
   return unwrapList(data);
+}
+
+export type ClassSchedule = {
+  id: number;
+  course_name: string;
+  course_code: string;
+  day_of_week: "mon" | "tue" | "wed" | "thu" | "fri";
+  start_time: string;
+  end_time: string;
+  location: string;
+};
+
+export async function fetchClassSchedules() {
+  const data = await request<unknown>("/rides/schedules/");
+  return unwrapList<ClassSchedule>(data);
+}
+
+export async function createClassSchedule(payload: {
+  course_name: string;
+  course_code?: string;
+  day_of_week: "mon" | "tue" | "wed" | "thu" | "fri";
+  start_time: string;
+  end_time: string;
+  location?: string;
+}) {
+  return request<ClassSchedule>("/rides/schedules/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteClassSchedule(id: number) {
+  return request<void>(`/rides/schedules/${id}/`, {
+    method: "DELETE",
+  });
 }

@@ -4,10 +4,12 @@ Rides serializers — Standardized for PostGIS.
 
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeometryField
-from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
 from django.contrib.auth.models import User
-from .models import RideOffer, RideRequest, UserProfile
+from .models import RideOffer, RideRequest, UserProfile, ClassSchedule
 from gamification.serializers import UserStatsSerializer, UserAchievementSerializer
+from .auth_utils import get_allowed_campus_domains, is_campus_email
 
 
 # ---------------------------------------------------------------------------
@@ -39,13 +41,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ["username", "email", "password", "role", "home_address"]
 
     def validate_email(self, value):
-        """Mock SSO: Enforce @utoledo.edu or @rockets.utoledo.edu domains (skipped when DEBUG)."""
-        if getattr(settings, "DEBUG", False):
-            return value
-        valid_domains = ["@rockets.utoledo.edu", "@utoledo.edu"]
-        if not any(value.lower().endswith(domain) for domain in valid_domains):
+        """Enforce UToledo email domains at registration time."""
+        if not is_campus_email(value):
             raise serializers.ValidationError(
-                "Registration restricted to UToledo accounts (@rockets or @utoledo)."
+                f"Registration restricted to UToledo accounts ({', '.join(get_allowed_campus_domains())})."
             )
         return value
 
@@ -62,6 +61,47 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.profile.home_address = home_address
         user.profile.save()
         return user
+
+
+class ProfileUpdateSerializer(serializers.Serializer):
+    username = serializers.CharField(required=False, max_length=150)
+    email = serializers.EmailField(required=False)
+    role = serializers.ChoiceField(choices=UserProfile.ROLE_CHOICES, required=False)
+    home_address = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=20)
+
+    def validate_email(self, value):
+        if not is_campus_email(value):
+            raise serializers.ValidationError(
+                f"Email must use a UToledo domain ({', '.join(get_allowed_campus_domains())})."
+            )
+
+        request = self.context.get("request")
+        if not request or not request.user:
+            return value
+
+        if (
+            User.objects.filter(email__iexact=value)
+            .exclude(id=request.user.id)
+            .exists()
+        ):
+            raise serializers.ValidationError("This email is already in use.")
+
+        return value
+
+    def validate_username(self, value):
+        request = self.context.get("request")
+        if not request or not request.user:
+            return value
+
+        if (
+            User.objects.filter(username__iexact=value)
+            .exclude(id=request.user.id)
+            .exists()
+        ):
+            raise serializers.ValidationError("This username is already in use.")
+
+        return value
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +131,28 @@ class RideOfferSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["driver", "created_at", "updated_at"]
+
+    def validate_available_seats(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Available seats must be at least 1.")
+        if value > 6:
+            raise serializers.ValidationError("Available seats cannot exceed 6.")
+        return value
+
+    def validate_departure_time(self, value):
+        min_time = timezone.now() - timedelta(minutes=5)
+        if value < min_time:
+            raise serializers.ValidationError("Departure time cannot be in the past.")
+        return value
+
+    def validate(self, attrs):
+        is_recurring = attrs.get("is_recurring", getattr(self.instance, "is_recurring", False))
+        recurrence_days = attrs.get("recurrence_days", getattr(self.instance, "recurrence_days", ""))
+        if is_recurring and not recurrence_days.strip():
+            raise serializers.ValidationError(
+                {"recurrence_days": "Recurrence days are required when recurring is enabled."}
+            )
+        return attrs
 
 
 class RideRequestSerializer(serializers.ModelSerializer):
@@ -130,3 +192,54 @@ class RideRequestSerializer(serializers.ModelSerializer):
                 "lat": obj.driver.profile.current_location.y
             }
         return None
+
+    def validate_seats_needed(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Seats needed must be at least 1.")
+        if value > 4:
+            raise serializers.ValidationError("Seats needed cannot exceed 4.")
+        return value
+
+    def validate_desired_time(self, value):
+        min_time = timezone.now() - timedelta(minutes=5)
+        if value < min_time:
+            raise serializers.ValidationError("Desired time cannot be in the past.")
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        ride_offer = attrs.get("ride_offer")
+        seats_needed = attrs.get("seats_needed", getattr(self.instance, "seats_needed", 1))
+        if ride_offer:
+            if not ride_offer.is_active:
+                raise serializers.ValidationError({"ride_offer": "Selected offer is no longer active."})
+            if seats_needed > ride_offer.available_seats:
+                raise serializers.ValidationError(
+                    {"seats_needed": "Selected offer does not have enough seats available."}
+                )
+        return attrs
+
+
+class ClassScheduleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClassSchedule
+        fields = [
+            "id",
+            "user",
+            "course_name",
+            "course_code",
+            "day_of_week",
+            "start_time",
+            "end_time",
+            "location",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["user", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        start_time = attrs.get("start_time", getattr(self.instance, "start_time", None))
+        end_time = attrs.get("end_time", getattr(self.instance, "end_time", None))
+        if start_time and end_time and end_time <= start_time:
+            raise serializers.ValidationError({"end_time": "End time must be after start time."})
+        return attrs

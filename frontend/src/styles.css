@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Loop — University carpooling design system
+ * Hitch-Hike — University carpooling design system
  * Palette: Midnight indigo + sunrise coral
  * Tokens defined in oklch. NEVER use raw colors in components.
  */

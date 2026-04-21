@@ -165,6 +165,9 @@ class MatchResultSerializer(serializers.Serializer):
     extra_seconds = serializers.FloatField(
         help_text="Additional seconds of travel caused by the detour."
     )
+    compatibility_score = serializers.IntegerField(
+        help_text="Heuristic match score from 0 to 100 (higher is better)."
+    )
 
 
 class ConfirmMatchSerializer(serializers.Serializer):

@@ -7,7 +7,7 @@ import * as api from "@/lib/api";
 
 export const Route = createFileRoute("/groups")({
   head: () => ({
-    meta: [{ title: "Carpool groups — Loop" }],
+    meta: [{ title: "Carpool groups — Hitch-Hike" }],
   }),
   component: Groups,
 });
@@ -28,16 +28,16 @@ function Groups() {
 
   const groups = rawGroups.map((g: any) => ({
     id: g.id.toString(),
-    name: g.name,
+    name: g.nickname || "Unnamed group",
     emoji: "🚗",
     members:
-      g.members?.map((m: any) => ({
-        initials: m.username.substring(0, 2).toUpperCase(),
+      g.members?.map((username: string) => ({
+        initials: username.substring(0, 2).toUpperCase(),
         tone: "indigo",
       })) || [],
-    frequency: "Active",
-    ridesShared: g.total_rides || 0,
-    co2SavedKg: g.total_rides * 2 || 0,
+    frequency: g.last_ride_date ? "Recent activity" : "Active",
+    ridesShared: g.rides_completed || 0,
+    co2SavedKg: (g.rides_completed || 0) * 2,
   }));
 
   return (

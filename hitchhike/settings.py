@@ -18,6 +18,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
+    CAMPUS_EMAIL_DOMAINS=(list, ["@rockets.utoledo.edu", "@utoledo.edu"]),
+    FRONTEND_BASE_URL=(str, "http://localhost:5173"),
+    MICROSOFT_TENANT_ID=(str, "organizations"),
+    MICROSOFT_CLIENT_ID=(str, ""),
+    MICROSOFT_CLIENT_SECRET=(str, ""),
+    MICROSOFT_REDIRECT_URI=(str, "http://localhost:8000/api/rides/auth/microsoft/callback/"),
 )
 
 # Read the .env file located at the project root
@@ -29,6 +35,15 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = ["*"]
+CAMPUS_EMAIL_DOMAINS = [domain.lower() for domain in env("CAMPUS_EMAIL_DOMAINS")]
+FRONTEND_BASE_URL = (env("FRONTEND_BASE_URL") or "").strip() or "http://localhost:5173"
+MICROSOFT_TENANT_ID = env("MICROSOFT_TENANT_ID")
+MICROSOFT_CLIENT_ID = env("MICROSOFT_CLIENT_ID")
+MICROSOFT_CLIENT_SECRET = env("MICROSOFT_CLIENT_SECRET")
+MICROSOFT_REDIRECT_URI = (
+    (env("MICROSOFT_REDIRECT_URI") or "").strip()
+    or "http://localhost:8000/api/rides/auth/microsoft/callback/"
+)
 
 # ---------------------------------------------------------------------------
 # Mapbox API

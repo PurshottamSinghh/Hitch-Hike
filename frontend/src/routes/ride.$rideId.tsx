@@ -10,27 +10,46 @@ import {
 } from "lucide-react";
 import { PhoneFrame, Avatar, Pill } from "@/components/app-shell";
 import { formatTime } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
 import { useState, useRef, useEffect } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 const TOKEN_KEY = "loop_mapbox_token";
+const DEFAULT_MAPBOX_TOKEN =
+  (import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN as string | undefined) ||
+  (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ||
+  "";
 
 export const Route = createFileRoute("/ride/$rideId")({
   head: () => ({
-    meta: [{ title: "Ride details — Loop" }],
+    meta: [{ title: "Ride details — Hitch-Hike" }],
   }),
   component: RideDetail,
 });
 
 function RideDetail() {
   const { rideId } = Route.useParams();
+  const queryClient = useQueryClient();
   const { data: offers = [], isLoading } = useQuery({
     queryKey: ["offers"],
     queryFn: api.fetchRideOffers,
     refetchInterval: 3000,
+  });
+  const { data: profile } = useQuery({
+    queryKey: ["profile"],
+    queryFn: api.fetchProfile,
+  });
+  const { data: rideRequest } = useQuery({
+    queryKey: ["rideRequest", rideId],
+    queryFn: () => api.fetchRideRequestById(rideId),
+    retry: false,
+  });
+  const { data: offerRequests = [] } = useQuery({
+    queryKey: ["offerRequests", rideId],
+    queryFn: () => api.fetchOfferRequests(rideId),
+    retry: false,
   });
 
   if (isLoading) {
@@ -41,7 +60,24 @@ function RideDetail() {
     );
   }
 
-  const rawRide = offers.find((r: any) => r.id.toString() === rideId) || offers[0];
+  const rawRideById = offers.find((r: any) => r.id.toString() === rideId);
+  const rawRideByAcceptedRequest =
+    rideRequest?.ride_offer != null
+      ? offers.find((r: any) => r.id.toString() === String(rideRequest.ride_offer))
+      : null;
+  const rideRequestFromOffer =
+    !rideRequest && rawRideById
+      ? offerRequests.find((r: any) => {
+          const me = profile?.username;
+          if (!me) return false;
+          return (
+            r.passenger_username === me ||
+            r.driver_username === me ||
+            (profile?.profile?.role === "driver" && r.status === "accepted")
+          );
+        }) || offerRequests[0]
+      : null;
+  const rawRide = rawRideById || rawRideByAcceptedRequest || offers[0];
 
   if (!rawRide) {
     return (
@@ -51,35 +87,95 @@ function RideDetail() {
     );
   }
 
-  const driverInitials = rawRide.driver_username
-    ? rawRide.driver_username.substring(0, 2).toUpperCase()
-    : "DR";
+  const driverName = rawRide?.driver_username || rideRequest?.driver_username || "Driver";
+  const driverInitials = driverName.substring(0, 2).toUpperCase();
 
+  const lifecycleStatus = normalizeRideStatus(rideRequest?.status || rideRequestFromOffer?.status);
+  const requestData = rideRequest || rideRequestFromOffer;
+  const isAssignedDriver =
+    profile?.username != null &&
+    (requestData?.driver_username === profile.username || rawRide?.driver_username === profile.username);
+  const isPassenger = profile?.username != null && requestData?.passenger_username === profile.username;
   const ride = {
-    id: rawRide.id.toString(),
+    id: (rawRide?.id ?? rideRequest?.id ?? rideId).toString(),
     driver: {
-      name: rawRide.driver_username,
+      name: driverName,
       initials: driverInitials,
       rating: 5.0,
       major: "Driver",
     },
     origin: "Pickup",
     destination: "Destination",
-    departAt: rawRide.departure_time,
+    departAt: rawRide?.departure_time || rideRequest?.desired_time || new Date().toISOString(),
     durationMin: 15,
-    seatsAvailable: rawRide.available_seats,
-    seatsTotal: rawRide.available_seats,
-    priceUsd: Number(rawRide.price_per_seat),
-    status: rawRide.status || "pending",
+    seatsAvailable: rawRide?.available_seats ?? rideRequest?.seats_needed ?? 1,
+    seatsTotal: rawRide?.available_seats ?? rideRequest?.seats_needed ?? 1,
+    priceUsd: Number(rawRide?.price_per_seat ?? 0),
+    status: lifecycleStatus,
+    requestId: rideRequest?.id ?? rideRequestFromOffer?.id ?? null,
   };
+  const canRequestOffer =
+    profile?.profile?.role === "rider" &&
+    ride.requestId == null &&
+    rawRideById != null;
 
   const stages = [
     { id: "pending", label: "Requested" },
     { id: "confirmed", label: "Confirmed" },
-    { id: "in_progress", label: "On the way" },
     { id: "completed", label: "Completed" },
+    { id: "cancelled", label: "Cancelled" },
   ] as const;
   const activeIdx = stages.findIndex((s) => s.id === ride.status);
+  const canComplete =
+    ride.requestId != null &&
+    (isAssignedDriver || isPassenger) &&
+    (ride.status === "confirmed" || ride.status === "pending");
+  const canCancel =
+    ride.requestId != null && isPassenger && (ride.status === "pending" || ride.status === "confirmed");
+  const completeActionLabel = getCompleteActionLabel({
+    hasRequest: ride.requestId != null,
+    isAssignedDriver,
+    isPassenger,
+    status: ride.status,
+  });
+
+  const completeMutation = useMutation({
+    mutationFn: (requestId: number) => api.completeRideRequest(requestId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["rideRequest", rideId] });
+      await queryClient.invalidateQueries({ queryKey: ["offerRequests", rideId] });
+      await queryClient.invalidateQueries({ queryKey: ["pendingRequests"] });
+    },
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (requestId: number) => api.cancelRideRequest(requestId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["rideRequest", rideId] });
+      await queryClient.invalidateQueries({ queryKey: ["offerRequests", rideId] });
+      await queryClient.invalidateQueries({ queryKey: ["pendingRequests"] });
+    },
+  });
+  const requestOfferMutation = useMutation({
+    mutationFn: async () => {
+      const pickup = extractCoords(rawRide?.origin) || [-83.61, 41.66];
+      const dropoff = extractCoords(rawRide?.destination) || [-83.55, 41.66];
+      return api.createRideRequest(
+        { lng: pickup[0], lat: pickup[1] },
+        { lng: dropoff[0], lat: dropoff[1] },
+        {
+          desiredTimeIso: rawRide?.departure_time,
+          seatsNeeded: 1,
+          rideOfferId: Number(rawRide.id),
+          notes: "Requested directly from offered rides list.",
+        },
+      );
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["rideRequest", rideId] });
+      await queryClient.invalidateQueries({ queryKey: ["offerRequests", rideId] });
+      await queryClient.invalidateQueries({ queryKey: ["pendingRequests"] });
+    },
+  });
 
   return (
     <PhoneFrame hideNav>
@@ -190,11 +286,37 @@ function RideDetail() {
         </button>
       </section>
 
-      <button className="mt-3 w-full rounded-2xl bg-primary py-4 text-[14px] font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98]">
-        Confirm pickup
+      {canRequestOffer && (
+        <button
+          onClick={() => requestOfferMutation.mutate()}
+          disabled={requestOfferMutation.isPending}
+          className="mt-3 w-full rounded-2xl bg-primary py-4 text-[14px] font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98] disabled:opacity-60"
+        >
+          {requestOfferMutation.isPending ? "Sending request..." : "Request this ride"}
+        </button>
+      )}
+
+      <button
+        disabled={!canComplete || completeMutation.isPending}
+        onClick={() => {
+          if (ride.requestId) completeMutation.mutate(ride.requestId);
+        }}
+        className="mt-3 w-full rounded-2xl bg-primary py-4 text-[14px] font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98] disabled:opacity-60"
+      >
+        {completeMutation.isPending
+          ? "Updating..."
+          : canComplete
+            ? "Mark ride completed"
+            : completeActionLabel}
       </button>
-      <button className="mt-2 w-full rounded-2xl bg-transparent py-3 text-[12px] font-semibold text-muted-foreground hover:text-destructive">
-        Cancel ride
+      <button
+        disabled={!canCancel || cancelMutation.isPending}
+        onClick={() => {
+          if (ride.requestId) cancelMutation.mutate(ride.requestId);
+        }}
+        className="mt-2 w-full rounded-2xl bg-transparent py-3 text-[12px] font-semibold text-muted-foreground hover:text-destructive disabled:opacity-60"
+      >
+        {cancelMutation.isPending ? "Cancelling..." : "Cancel ride"}
       </button>
 
       <div className="mt-10" />
@@ -216,7 +338,7 @@ function ActiveRideMap({
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
   const [token, setToken] = useState<string>(() =>
-    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) || "" : "",
+    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) || DEFAULT_MAPBOX_TOKEN : "",
   );
 
   useEffect(() => {
@@ -273,9 +395,39 @@ function ActiveRideMap({
   if (!token)
     return (
       <div className="h-40 w-full rounded-2xl bg-black/20 flex items-center justify-center text-xs opacity-70">
-        Add token in Discover map
+        Set VITE_MAPBOX_PUBLIC_TOKEN to enable live maps
       </div>
     );
 
   return <div ref={containerRef} className="h-40 w-full overflow-hidden rounded-2xl" />;
+}
+
+function normalizeRideStatus(raw?: string) {
+  if (!raw) return "pending";
+  if (raw === "accepted" || raw === "matched") return "confirmed";
+  if (raw === "rejected" || raw === "cancelled") return "cancelled";
+  if (raw === "completed") return "completed";
+  return "pending";
+}
+
+function getCompleteActionLabel(params: {
+  hasRequest: boolean;
+  isAssignedDriver: boolean;
+  isPassenger: boolean;
+  status: string;
+}) {
+  if (!params.hasRequest) return "No rider request yet";
+  if (params.status === "completed") return "Ride completed";
+  if (params.status === "cancelled") return "Ride cancelled";
+  if (params.isPassenger) return "Waiting for driver acceptance";
+  if (!params.isAssignedDriver) return "Assigned driver can complete";
+  return "Action unavailable";
+}
+
+function extractCoords(point: any): [number, number] | null {
+  if (!point) return null;
+  if (Array.isArray(point.coordinates) && point.coordinates.length >= 2) {
+    return [Number(point.coordinates[0]), Number(point.coordinates[1])];
+  }
+  return null;
 }

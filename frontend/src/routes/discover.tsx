@@ -12,12 +12,16 @@ import * as api from "@/lib/api";
 
 export const Route = createFileRoute("/discover")({
   head: () => ({
-    meta: [{ title: "Discover rides — Loop" }],
+    meta: [{ title: "Discover rides — Hitch-Hike" }],
   }),
   component: Discover,
 });
 
 const TOKEN_KEY = "loop_mapbox_token";
+const DEFAULT_MAPBOX_TOKEN =
+  (import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN as string | undefined) ||
+  (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ||
+  "";
 
 function Discover() {
   const [view, setView] = useState<"list" | "map">("list");
@@ -159,7 +163,7 @@ function MapView({ rides }: { rides: any[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [token, setToken] = useState<string>(() =>
-    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) || "" : "",
+    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) || DEFAULT_MAPBOX_TOKEN : "",
   );
   const [tokenInput, setTokenInput] = useState("");
 
@@ -231,7 +235,7 @@ function MapView({ rides }: { rides: any[] }) {
           </button>
         </div>
         <p className="mt-3 text-[11px] text-muted-foreground">
-          Get a free token at <span className="font-semibold">mapbox.com</span> → Account → Tokens.
+          Set `VITE_MAPBOX_PUBLIC_TOKEN` or use mapbox.com → Account → Tokens.
         </p>
       </div>
     );

@@ -10,6 +10,7 @@ This module contains the ``MatchingEngine`` class which encapsulates:
 import json
 import logging
 import re
+import math
 from typing import Any
 
 import requests
@@ -192,15 +193,15 @@ class MatchingEngine:
                 f"RideRequest with id {ride_request_id} does not exist."
             )
 
-        if ride_request.status in ("matched", "accepted"):
+        if ride_request.status != "pending":
             raise MatchingError(
-                f"RideRequest #{ride_request_id} has already been matched."
+                f"RideRequest #{ride_request_id} is not pending (current: {ride_request.status})."
             )
 
         # --- Fetch active offers with at least 1 seat -------------------
         offers = RideOffer.objects.filter(
             is_active=True,
-            available_seats__gte=1,
+            available_seats__gte=ride_request.seats_needed,
         ).select_related("driver")
 
         if not offers.exists():
@@ -215,12 +216,16 @@ class MatchingEngine:
                 score = self._compute_detour(offer, ride_request)
             except MapboxAPIError:
                 logger.warning(
-                    "Skipping Offer #%d — Mapbox API error.", offer.pk
+                    "Mapbox unavailable for Offer #%d — using fallback heuristic.", offer.pk
                 )
-                continue
+                score = self._compute_detour_fallback(offer, ride_request)
 
             if score["extra_seconds"] > MAX_DETOUR_SECONDS:
                 continue
+
+            compatibility_score = max(
+                0, min(100, round(100 - (score["extra_seconds"] / MAX_DETOUR_SECONDS) * 100))
+            )
 
             results.append(
                 {
@@ -231,6 +236,7 @@ class MatchingEngine:
                     "original_duration": score["original_duration"],
                     "detoured_duration": score["detoured_duration"],
                     "extra_seconds": score["extra_seconds"],
+                    "compatibility_score": compatibility_score,
                 }
             )
 
@@ -278,6 +284,37 @@ class MatchingEngine:
 
         extra = detoured_duration - original_duration
 
+        return {
+            "original_duration": round(original_duration, 1),
+            "detoured_duration": round(detoured_duration, 1),
+            "extra_seconds": round(max(extra, 0), 1),
+        }
+
+    def _compute_detour_fallback(
+        self,
+        offer: RideOffer,
+        request: RideRequest,
+    ) -> dict[str, float]:
+        """
+        Fallback when Mapbox is unavailable.
+        Uses rough great-circle approximation and average city speed.
+        """
+        speed_m_s = 11.0  # ~25 mph average urban speed
+
+        driver_origin = _extract_coords(offer.origin)
+        driver_dest = _extract_coords(offer.destination)
+        rider_pickup = _extract_coords(request.pickup_location)
+        rider_dropoff = _extract_coords(request.dropoff_location)
+
+        original_m = _haversine_m(driver_origin, driver_dest)
+        detoured_m = (
+            _haversine_m(driver_origin, rider_pickup)
+            + _haversine_m(rider_pickup, rider_dropoff)
+            + _haversine_m(rider_dropoff, driver_dest)
+        )
+        original_duration = original_m / speed_m_s
+        detoured_duration = detoured_m / speed_m_s
+        extra = detoured_duration - original_duration
         return {
             "original_duration": round(original_duration, 1),
             "detoured_duration": round(detoured_duration, 1),
@@ -348,9 +385,13 @@ class MatchingEngine:
                     f"RideRequest with id {ride_request_id} does not exist."
                 )
 
-            if ride_request.status in ("matched", "accepted"):
+            if ride_request.status != "pending":
                 raise MatchingError(
-                    f"RideRequest #{ride_request_id} is already matched."
+                    f"RideRequest #{ride_request_id} is not pending (current: {ride_request.status})."
+                )
+            if offer.available_seats < ride_request.seats_needed:
+                raise MatchingError(
+                    f"RideOffer #{ride_offer_id} does not have enough seats."
                 )
 
             # --- Compute final detour for the confirmation record --------
@@ -375,15 +416,15 @@ class MatchingEngine:
             ride.save()
 
             # --- Decrement seats & update statuses -----------------------
-            offer.available_seats -= 1
+            offer.available_seats -= ride_request.seats_needed
             if offer.available_seats == 0:
                 offer.is_active = False
             offer.save()
 
-            # Fix: Use 'accepted' status to match frontend polling and manual acceptance
-            # Also set the driver directly on the request for immediate visibility
-            ride_request.status = "accepted"
+            # Auto-matched requests are marked as matched to separate them from manual accepts.
+            ride_request.status = "matched"
             ride_request.driver = offer.driver
+            ride_request.ride_offer = offer
             ride_request.save()
 
             logger.info(
@@ -397,3 +438,20 @@ class MatchingEngine:
             )
 
         return ride
+
+
+def _haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance in meters between two (lng, lat) points."""
+    lng1, lat1 = a
+    lng2, lat2 = b
+    r = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+
+    h = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * r * math.atan2(math.sqrt(h), math.sqrt(1 - h))

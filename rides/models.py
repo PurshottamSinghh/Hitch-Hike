@@ -145,3 +145,39 @@ class RideRequest(models.Model):
 
     def __str__(self):
         return f"Request #{self.pk} by {self.passenger} ({self.status})"
+
+
+class ClassSchedule(models.Model):
+    DAY_CHOICES = [
+        ("mon", "Monday"),
+        ("tue", "Tuesday"),
+        ("wed", "Wednesday"),
+        ("thu", "Thursday"),
+        ("fri", "Friday"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="class_schedules",
+    )
+    course_name = models.CharField(max_length=120)
+    course_code = models.CharField(max_length=30, blank=True, default="")
+    day_of_week = models.CharField(max_length=3, choices=DAY_CHOICES)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    location = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["day_of_week", "start_time"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "day_of_week", "start_time", "end_time", "course_name"],
+                name="unique_user_class_block",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.course_name} ({self.day_of_week})"
