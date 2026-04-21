@@ -12,19 +12,14 @@ import { PhoneFrame, Avatar, Pill } from "@/components/app-shell";
 import { formatTime } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-
-const TOKEN_KEY = "loop_mapbox_token";
-const DEFAULT_MAPBOX_TOKEN =
-  (import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN as string | undefined) ||
-  (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ||
-  "";
+import { MAPBOX_PUBLIC_TOKEN, fetchRoute } from "@/lib/mapbox";
 
 export const Route = createFileRoute("/ride/$rideId")({
   head: () => ({
-    meta: [{ title: "Ride details — Hitch-Hike" }],
+    meta: [{ title: "Active ride — Hitch-Hike" }],
   }),
   component: RideDetail,
 });
@@ -32,150 +27,109 @@ export const Route = createFileRoute("/ride/$rideId")({
 function RideDetail() {
   const { rideId } = Route.useParams();
   const queryClient = useQueryClient();
-  const { data: offers = [], isLoading } = useQuery({
-    queryKey: ["offers"],
-    queryFn: api.fetchRideOffers,
-    refetchInterval: 3000,
-  });
+
   const { data: profile } = useQuery({
     queryKey: ["profile"],
     queryFn: api.fetchProfile,
   });
-  const { data: rideRequest } = useQuery({
+
+  const { data: rideRequest } = useQuery<any>({
     queryKey: ["rideRequest", rideId],
     queryFn: () => api.fetchRideRequestById(rideId),
     retry: false,
-  });
-  const { data: offerRequests = [] } = useQuery({
-    queryKey: ["offerRequests", rideId],
-    queryFn: () => api.fetchOfferRequests(rideId),
-    retry: false,
+    refetchInterval: 3000,
   });
 
-  if (isLoading) {
-    return (
-      <PhoneFrame hideNav>
-        <div className="flex p-4 text-muted-foreground">Loading ride...</div>
-      </PhoneFrame>
-    );
-  }
+  const isPassenger =
+    profile?.username != null && rideRequest?.passenger_username === profile.username;
+  const isDriver =
+    profile?.username != null && rideRequest?.driver_username === profile.username;
 
-  const rawRideById = offers.find((r: any) => r.id.toString() === rideId);
-  const rawRideByAcceptedRequest =
-    rideRequest?.ride_offer != null
-      ? offers.find((r: any) => r.id.toString() === String(rideRequest.ride_offer))
-      : null;
-  const rideRequestFromOffer =
-    !rideRequest && rawRideById
-      ? offerRequests.find((r: any) => {
-          const me = profile?.username;
-          if (!me) return false;
-          return (
-            r.passenger_username === me ||
-            r.driver_username === me ||
-            (profile?.profile?.role === "driver" && r.status === "accepted")
-          );
-        }) || offerRequests[0]
-      : null;
-  const rawRide = rawRideById || rawRideByAcceptedRequest || offers[0];
-
-  if (!rawRide) {
-    return (
-      <PhoneFrame hideNav>
-        <div className="flex p-4 text-muted-foreground">Ride not found.</div>
-      </PhoneFrame>
-    );
-  }
-
-  const driverName = rawRide?.driver_username || rideRequest?.driver_username || "Driver";
-  const driverInitials = driverName.substring(0, 2).toUpperCase();
-
-  const lifecycleStatus = normalizeRideStatus(rideRequest?.status || rideRequestFromOffer?.status);
-  const requestData = rideRequest || rideRequestFromOffer;
-  const isAssignedDriver =
-    profile?.username != null &&
-    (requestData?.driver_username === profile.username || rawRide?.driver_username === profile.username);
-  const isPassenger = profile?.username != null && requestData?.passenger_username === profile.username;
-  const ride = {
-    id: (rawRide?.id ?? rideRequest?.id ?? rideId).toString(),
-    driver: {
-      name: driverName,
-      initials: driverInitials,
-      rating: 5.0,
-      major: "Driver",
-    },
-    origin: "Pickup",
-    destination: "Destination",
-    departAt: rawRide?.departure_time || rideRequest?.desired_time || new Date().toISOString(),
-    durationMin: 15,
-    seatsAvailable: rawRide?.available_seats ?? rideRequest?.seats_needed ?? 1,
-    seatsTotal: rawRide?.available_seats ?? rideRequest?.seats_needed ?? 1,
-    priceUsd: Number(rawRide?.price_per_seat ?? 0),
-    status: lifecycleStatus,
-    requestId: rideRequest?.id ?? rideRequestFromOffer?.id ?? null,
-  };
-  const canRequestOffer =
-    profile?.profile?.role === "rider" &&
-    ride.requestId == null &&
-    rawRideById != null;
-
-  const stages = [
-    { id: "pending", label: "Requested" },
-    { id: "confirmed", label: "Confirmed" },
-    { id: "completed", label: "Completed" },
-    { id: "cancelled", label: "Cancelled" },
-  ] as const;
-  const activeIdx = stages.findIndex((s) => s.id === ride.status);
-  const canComplete =
-    ride.requestId != null &&
-    (isAssignedDriver || isPassenger) &&
-    (ride.status === "confirmed" || ride.status === "pending");
-  const canCancel =
-    ride.requestId != null && isPassenger && (ride.status === "pending" || ride.status === "confirmed");
-  const completeActionLabel = getCompleteActionLabel({
-    hasRequest: ride.requestId != null,
-    isAssignedDriver,
-    isPassenger,
-    status: ride.status,
-  });
+  // NOTE: the active ride page used to `watchPosition` and push the driver's
+  // browser GPS back to the backend every few seconds. That silently
+  // overwrote the manually-pinned driver location that testers set from
+  // /create. We intentionally do NOT stream GPS here — the driver's pinned
+  // location on the profile is authoritative. If real live tracking is
+  // needed later, add an explicit "Share my live location" opt-in toggle.
 
   const completeMutation = useMutation({
     mutationFn: (requestId: number) => api.completeRideRequest(requestId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["rideRequest", rideId] });
-      await queryClient.invalidateQueries({ queryKey: ["offerRequests", rideId] });
-      await queryClient.invalidateQueries({ queryKey: ["pendingRequests"] });
+      await queryClient.invalidateQueries({ queryKey: ["myRideRequests"] });
     },
   });
   const cancelMutation = useMutation({
     mutationFn: (requestId: number) => api.cancelRideRequest(requestId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["rideRequest", rideId] });
-      await queryClient.invalidateQueries({ queryKey: ["offerRequests", rideId] });
-      await queryClient.invalidateQueries({ queryKey: ["pendingRequests"] });
+      await queryClient.invalidateQueries({ queryKey: ["myRideRequests"] });
     },
   });
-  const requestOfferMutation = useMutation({
-    mutationFn: async () => {
-      const pickup = extractCoords(rawRide?.origin) || [-83.61, 41.66];
-      const dropoff = extractCoords(rawRide?.destination) || [-83.55, 41.66];
-      return api.createRideRequest(
-        { lng: pickup[0], lat: pickup[1] },
-        { lng: dropoff[0], lat: dropoff[1] },
-        {
-          desiredTimeIso: rawRide?.departure_time,
-          seatsNeeded: 1,
-          rideOfferId: Number(rawRide.id),
-          notes: "Requested directly from offered rides list.",
-        },
-      );
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["rideRequest", rideId] });
-      await queryClient.invalidateQueries({ queryKey: ["offerRequests", rideId] });
-      await queryClient.invalidateQueries({ queryKey: ["pendingRequests"] });
-    },
-  });
+
+  if (!rideRequest) {
+    return (
+      <PhoneFrame hideNav>
+        <div className="p-4 text-muted-foreground">Loading ride...</div>
+      </PhoneFrame>
+    );
+  }
+
+  const pickup = extractCoords(rideRequest.pickup_location);
+  const dropoff = extractCoords(rideRequest.dropoff_location);
+  const driverPos: [number, number] | null = rideRequest.driver_coords
+    ? [rideRequest.driver_coords.lng, rideRequest.driver_coords.lat]
+    : null;
+
+  const status = rideRequest.status as string;
+  const stages = [
+    { id: "pending", label: "Requested" },
+    { id: "accepted", label: "En route to pickup" },
+    { id: "completed", label: "Completed" },
+    { id: "cancelled", label: "Cancelled" },
+  ] as const;
+  const normalized =
+    status === "matched"
+      ? "accepted"
+      : status === "pending_rider_confirm" || status === "no_drivers_available"
+        ? "pending"
+        : status;
+  const activeIdx = stages.findIndex((s) => s.id === normalized);
+
+  const canComplete =
+    (isDriver || isPassenger) &&
+    ["accepted", "matched"].includes(status);
+  const canCancel =
+    isPassenger && ["pending", "accepted", "matched"].includes(status);
+
+  const driverName = rideRequest.driver_username || "Awaiting driver";
+  const driverInitials = driverName.substring(0, 2).toUpperCase();
+
+  // Reroute ETA = travel time for the assigned driver to reach the rider's
+  // pickup point, captured at dispatch time in `pickup_eta_seconds` (a dict
+  // of driver_id -> seconds). After `accept`, the assigned driver id lives on
+  // `rideRequest.driver`.
+  const rerouteSeconds: number | null = (() => {
+    const eta = rideRequest.pickup_eta_seconds;
+    const driverId = rideRequest.driver;
+    if (!eta || driverId == null) return null;
+    const raw = typeof eta === "object" ? eta[String(driverId)] : null;
+    const num = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  })();
+  const rerouteMin =
+    rerouteSeconds != null ? Math.max(1, Math.round(rerouteSeconds / 60)) : null;
+
+  // For schedule-sourced rides ("same class, same time" offers) we show
+  // both the pickup time AND the time the driver should leave so everyone
+  // still makes it to class on time. Leave-by = pickup − driver→pickup ETA.
+  const isScheduleRide = rideRequest.dispatch_source === "schedule";
+  const leaveByIso: string | null = (() => {
+    if (!isScheduleRide || rerouteSeconds == null) return null;
+    const pickupMs = new Date(rideRequest.desired_time).getTime();
+    if (!Number.isFinite(pickupMs)) return null;
+    return new Date(pickupMs - rerouteSeconds * 1000).toISOString();
+  })();
 
   return (
     <PhoneFrame hideNav>
@@ -186,23 +140,26 @@ function RideDetail() {
         >
           <ChevronLeft className="h-4 w-4" />
         </Link>
-        <Pill tone="primary">Ride · {ride.id.toUpperCase()}</Pill>
+        <Pill tone="primary">Ride · {String(rideRequest.id)}</Pill>
         <button className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface shadow-soft">
           <Share2 className="h-4 w-4" />
         </button>
       </header>
 
-      {/* hero */}
       <section className="mt-5 overflow-hidden rounded-3xl bg-gradient-aurora p-5 text-primary-foreground shadow-glow noise">
         <div className="flex items-center gap-3">
-          <Avatar initials={ride.driver.initials} tone="coral" size="xl" ring />
+          <Avatar initials={driverInitials} tone="coral" size="xl" ring />
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-wider opacity-70">
-              Your driver
+              {isDriver ? "You're driving" : "Your driver"}
             </p>
-            <p className="truncate text-[18px] font-bold tracking-tight">{ride.driver.name}</p>
+            <p className="truncate text-[18px] font-bold tracking-tight">{driverName}</p>
             <p className="text-[12px] opacity-80">
-              {ride.driver.major} · ★ {ride.driver.rating}
+              {rerouteMin != null
+                ? isDriver
+                  ? `Rerouting ~${rerouteMin} min to pickup`
+                  : `Arriving in ~${rerouteMin} min`
+                : "Pickup · ★ 5.0"}
             </p>
           </div>
           <span className="relative flex h-3 w-3">
@@ -212,38 +169,66 @@ function RideDetail() {
         </div>
 
         <div className="mt-4 rounded-2xl bg-white/10 p-3 backdrop-blur-md">
-          <ActiveRideMap
-            from={[-83.61, 41.66]}
-            to={[-83.55, 41.66]}
-            driverLocation={ride.status === "in_progress" ? [-83.58, 41.66] : [-83.61, 41.66]}
+          <ThreePointMap
+            driver={driverPos}
+            pickup={pickup}
+            dropoff={dropoff}
           />
-          <div className="mt-1 flex items-center justify-between text-[12px] opacity-90">
-            <span className="truncate">{ride.origin}</span>
-            <span className="rounded-full bg-white/20 px-2 py-0.5 font-semibold">
-              {ride.durationMin} min
+          <div className="mt-2 flex items-center gap-3 text-[10px] font-semibold uppercase tracking-wider opacity-90">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-0.5 w-5 rounded-full bg-[#38bdf8]" />
+              Driver → Pickup
             </span>
-            <span className="truncate text-right">{ride.destination}</span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-0.5 w-5 rounded-full bg-[#fb923c]" />
+              Pickup → Destination
+            </span>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[12px] opacity-90">
+            <span className="truncate">{rideRequest.pickup_address || "Pickup"}</span>
+            <span>→</span>
+            <span className="truncate text-right">
+              {rideRequest.dropoff_address || "Destination"}
+            </span>
           </div>
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2 text-center">
           {[
-            { label: "Departs", value: formatTime(ride.departAt) },
-            { label: "Seats", value: `${ride.seatsAvailable}/${ride.seatsTotal}` },
-            { label: "Cost", value: `$${ride.priceUsd.toFixed(2)}` },
+            {
+              label: isScheduleRide ? "Pickup" : "Scheduled",
+              value: formatTime(rideRequest.desired_time),
+            },
+            isScheduleRide && leaveByIso
+              ? {
+                  label: isDriver ? "Leave by" : "Driver leaves",
+                  value: formatTime(leaveByIso),
+                }
+              : rerouteMin != null
+                ? {
+                    label: isDriver ? "Reroute" : "Pickup ETA",
+                    value: `${rerouteMin} min`,
+                  }
+                : { label: "Seats", value: String(rideRequest.seats_needed || 1) },
+            { label: "Status", value: prettyStatus(status) },
           ].map((s) => (
             <div key={s.label} className="rounded-xl bg-white/10 p-2.5 backdrop-blur-md">
               <p className="text-[10px] uppercase tracking-wider opacity-70">{s.label}</p>
-              <p className="mt-0.5 text-[15px] font-bold tracking-tight">{s.value}</p>
+              <p className="mt-0.5 text-[13px] font-bold tracking-tight">{s.value}</p>
             </div>
           ))}
         </div>
+
+        {isScheduleRide && rideRequest.notes && (
+          <p className="mt-3 rounded-2xl bg-white/10 px-3 py-2 text-[11px] opacity-90 backdrop-blur-md">
+            {rideRequest.notes}
+          </p>
+        )}
       </section>
 
-      {/* progress timeline */}
       <section className="mt-6 rounded-3xl border border-border bg-surface p-5 shadow-soft">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Status
+          Timeline
         </p>
         <ol className="mt-4 space-y-4">
           {stages.map((s, i) => {
@@ -260,15 +245,13 @@ function RideDetail() {
                     <Circle className="h-5 w-5 text-muted-foreground/40" />
                   )}
                 </span>
-                <div className="flex-1">
-                  <p
-                    className={`text-[14px] font-semibold tracking-tight ${
-                      active ? "text-foreground" : "text-muted-foreground"
-                    }`}
-                  >
-                    {s.label}
-                  </p>
-                </div>
+                <p
+                  className={`flex-1 text-[14px] font-semibold tracking-tight ${
+                    active ? "text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {s.label}
+                </p>
                 {active && <Pill tone="accent">Now</Pill>}
               </li>
             );
@@ -276,7 +259,6 @@ function RideDetail() {
         </ol>
       </section>
 
-      {/* actions */}
       <section className="mt-6 grid grid-cols-2 gap-3">
         <button className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-3 py-3.5 text-[13px] font-semibold shadow-soft">
           <MessageCircle className="h-4 w-4 text-primary" /> Message
@@ -286,142 +268,225 @@ function RideDetail() {
         </button>
       </section>
 
-      {canRequestOffer && (
-        <button
-          onClick={() => requestOfferMutation.mutate()}
-          disabled={requestOfferMutation.isPending}
-          className="mt-3 w-full rounded-2xl bg-primary py-4 text-[14px] font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98] disabled:opacity-60"
-        >
-          {requestOfferMutation.isPending ? "Sending request..." : "Request this ride"}
-        </button>
-      )}
-
       <button
         disabled={!canComplete || completeMutation.isPending}
-        onClick={() => {
-          if (ride.requestId) completeMutation.mutate(ride.requestId);
-        }}
-        className="mt-3 w-full rounded-2xl bg-primary py-4 text-[14px] font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98] disabled:opacity-60"
+        onClick={() => completeMutation.mutate(rideRequest.id)}
+        className="mt-4 w-full rounded-2xl bg-primary py-4 text-[14px] font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98] disabled:opacity-60"
       >
         {completeMutation.isPending
           ? "Updating..."
           : canComplete
             ? "Mark ride completed"
-            : completeActionLabel}
+            : status === "completed"
+              ? "Ride completed"
+              : status === "cancelled"
+                ? "Ride cancelled"
+                : "Action unavailable"}
       </button>
       <button
         disabled={!canCancel || cancelMutation.isPending}
-        onClick={() => {
-          if (ride.requestId) cancelMutation.mutate(ride.requestId);
-        }}
+        onClick={() => cancelMutation.mutate(rideRequest.id)}
         className="mt-2 w-full rounded-2xl bg-transparent py-3 text-[12px] font-semibold text-muted-foreground hover:text-destructive disabled:opacity-60"
       >
         {cancelMutation.isPending ? "Cancelling..." : "Cancel ride"}
       </button>
-
-      <div className="mt-10" />
+      <div className="h-10" />
     </PhoneFrame>
   );
 }
 
-function ActiveRideMap({
-  from,
-  to,
-  driverLocation,
+function ThreePointMap({
+  driver,
+  pickup,
+  dropoff,
 }: {
-  from: [number, number];
-  to: [number, number];
-  driverLocation: [number, number];
+  driver: [number, number] | null;
+  pickup: [number, number] | null;
+  dropoff: [number, number] | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const pickupMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const dropoffMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  // Only draw routes AFTER the map has finished loading and its sources
+  // have been added. Without this gate, the leg-drawing effect could fire
+  // while the map was still loading, no-op on `getSource`, and the route
+  // would silently never appear.
+  const [mapReady, setMapReady] = useState(false);
 
-  const [token, setToken] = useState<string>(() =>
-    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) || DEFAULT_MAPBOX_TOKEN : "",
-  );
+  const routeKey = useMemo(() => {
+    const d = driver ? `${driver[0]},${driver[1]}` : "-";
+    const p = pickup ? `${pickup[0]},${pickup[1]}` : "-";
+    const o = dropoff ? `${dropoff[0]},${dropoff[1]}` : "-";
+    return `${d}|${p}|${o}`;
+  }, [driver, pickup, dropoff]);
+
+  const center: [number, number] =
+    pickup || driver || dropoff || [-83.61, 41.66];
 
   useEffect(() => {
-    if (!token || !containerRef.current || mapRef.current) return;
-    mapboxgl.accessToken = token;
-    try {
-      const map = new mapboxgl.Map({
-        container: containerRef.current,
-        style: "mapbox://styles/mapbox/dark-v11",
-        center: driverLocation,
-        zoom: 13,
-        attributionControl: false,
+    if (!MAPBOX_PUBLIC_TOKEN || !containerRef.current) return;
+    if (mapRef.current) return;
+
+    mapboxgl.accessToken = MAPBOX_PUBLIC_TOKEN;
+    mapRef.current = new mapboxgl.Map({
+      container: containerRef.current,
+      style: "mapbox://styles/mapbox/dark-v11",
+      center,
+      zoom: 12,
+      attributionControl: false,
+    });
+    mapRef.current.on("load", () => {
+      const m = mapRef.current;
+      if (!m) return;
+      // Segment 1: driver → pickup ("approach leg") — sky blue, dashed.
+      m.addSource("route-pickup", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "LineString", coordinates: [] },
+        },
       });
-      mapRef.current = map;
-
-      map.on("load", () => {
-        // origin
-        const startEl = document.createElement("div");
-        startEl.className =
-          "h-3 w-3 rounded-full bg-[oklch(0.32_0.14_275)] ring-4 ring-[oklch(0.32_0.14_275)]/25";
-        new mapboxgl.Marker(startEl).setLngLat(from).addTo(map);
-
-        // dest
-        const endEl = document.createElement("div");
-        endEl.className =
-          "h-3 w-3 rounded-sm bg-[oklch(0.72_0.18_32)] ring-4 ring-[oklch(0.72_0.18_32)]/25";
-        new mapboxgl.Marker(endEl).setLngLat(to).addTo(map);
-
-        // driver
-        const driverEl = document.createElement("div");
-        driverEl.className =
-          "flex h-6 w-6 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-glow animate-pulse";
-        driverEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a2 2 0 0 0-1.6-.8H8a2 2 0 0 0-2 2v2M3 16h3m10 0v-2.15a1 1 0 0 0-.84-.99L12 11H8m-3 5a2 2 0 1 0 4 0 2 2 0 1 0-4 0Zm10 0a2 2 0 1 0 4 0 2 2 0 1 0-4 0Z"/></svg>`;
-        driverMarkerRef.current = new mapboxgl.Marker(driverEl)
-          .setLngLat(driverLocation)
-          .addTo(map);
+      m.addLayer({
+        id: "route-pickup-line",
+        type: "line",
+        source: "route-pickup",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": "#38bdf8",
+          "line-width": 5,
+          "line-opacity": 0.95,
+          "line-dasharray": [1.5, 1.2],
+        },
       });
-    } catch (err) {
-      console.error(err);
-    }
+      // Segment 2: pickup → dropoff ("trip leg") — warm orange, solid.
+      m.addSource("route-trip", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "LineString", coordinates: [] },
+        },
+      });
+      m.addLayer({
+        id: "route-trip-line",
+        type: "line",
+        source: "route-trip",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#fb923c", "line-width": 5, "line-opacity": 0.95 },
+      });
+      setMapReady(true);
+    });
 
     return () => {
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    if (driverMarkerRef.current) {
-      driverMarkerRef.current.setLngLat(driverLocation);
-    }
-  }, [driverLocation]);
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
 
-  if (!token)
+    // Markers (replace each time so we can drop stale ones safely).
+    if (driver) {
+      if (!driverMarkerRef.current) {
+        const el = document.createElement("div");
+        el.className =
+          "flex h-6 w-6 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-glow animate-pulse text-[10px] font-bold";
+        el.textContent = "D";
+        driverMarkerRef.current = new mapboxgl.Marker(el).setLngLat(driver).addTo(map);
+      } else {
+        driverMarkerRef.current.setLngLat(driver);
+      }
+    } else {
+      driverMarkerRef.current?.remove();
+      driverMarkerRef.current = null;
+    }
+
+    if (pickup) {
+      if (!pickupMarkerRef.current) {
+        const el = document.createElement("div");
+        el.className = "h-3 w-3 rounded-full bg-white ring-4 ring-primary";
+        pickupMarkerRef.current = new mapboxgl.Marker(el).setLngLat(pickup).addTo(map);
+      } else {
+        pickupMarkerRef.current.setLngLat(pickup);
+      }
+    }
+
+    if (dropoff) {
+      if (!dropoffMarkerRef.current) {
+        const el = document.createElement("div");
+        el.className = "h-3 w-3 rounded-sm bg-white ring-4 ring-accent";
+        dropoffMarkerRef.current = new mapboxgl.Marker(el).setLngLat(dropoff).addTo(map);
+      } else {
+        dropoffMarkerRef.current.setLngLat(dropoff);
+      }
+    }
+
+    // Draw the two route legs independently so each can have its own colour.
+    const drawLeg = (
+      sourceId: "route-pickup" | "route-trip",
+      legWaypoints: [number, number][],
+    ) => {
+      fetchRoute(legWaypoints)
+        .then((route) => {
+          const source = mapRef.current?.getSource(sourceId) as
+            | mapboxgl.GeoJSONSource
+            | undefined;
+          if (!source) return;
+          source.setData({
+            type: "Feature",
+            properties: {},
+            geometry: route
+              ? route.geometry
+              : { type: "LineString", coordinates: legWaypoints },
+          });
+        })
+        .catch(() => null);
+    };
+
+    const clearLeg = (sourceId: "route-pickup" | "route-trip") => {
+      const source = mapRef.current?.getSource(sourceId) as
+        | mapboxgl.GeoJSONSource
+        | undefined;
+      source?.setData({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: [] },
+      });
+    };
+
+    if (driver && pickup) drawLeg("route-pickup", [driver, pickup]);
+    else clearLeg("route-pickup");
+
+    if (pickup && dropoff) drawLeg("route-trip", [pickup, dropoff]);
+    else clearLeg("route-trip");
+
+    const allWaypoints: [number, number][] = [];
+    if (driver) allWaypoints.push(driver);
+    if (pickup) allWaypoints.push(pickup);
+    if (dropoff) allWaypoints.push(dropoff);
+    if (allWaypoints.length < 2) return;
+
+    const bounds = new mapboxgl.LngLatBounds();
+    allWaypoints.forEach((w) => bounds.extend(w));
+    map.fitBounds(bounds, { padding: 50, duration: 600, maxZoom: 14 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, mapReady]);
+
+  if (!MAPBOX_PUBLIC_TOKEN) {
     return (
-      <div className="h-40 w-full rounded-2xl bg-black/20 flex items-center justify-center text-xs opacity-70">
-        Set VITE_MAPBOX_PUBLIC_TOKEN to enable live maps
+      <div className="flex h-40 w-full items-center justify-center rounded-2xl bg-black/20 text-[12px] opacity-70">
+        Set VITE_MAPBOX_PUBLIC_TOKEN to enable the live map.
       </div>
     );
+  }
 
-  return <div ref={containerRef} className="h-40 w-full overflow-hidden rounded-2xl" />;
-}
-
-function normalizeRideStatus(raw?: string) {
-  if (!raw) return "pending";
-  if (raw === "accepted" || raw === "matched") return "confirmed";
-  if (raw === "rejected" || raw === "cancelled") return "cancelled";
-  if (raw === "completed") return "completed";
-  return "pending";
-}
-
-function getCompleteActionLabel(params: {
-  hasRequest: boolean;
-  isAssignedDriver: boolean;
-  isPassenger: boolean;
-  status: string;
-}) {
-  if (!params.hasRequest) return "No rider request yet";
-  if (params.status === "completed") return "Ride completed";
-  if (params.status === "cancelled") return "Ride cancelled";
-  if (params.isPassenger) return "Waiting for driver acceptance";
-  if (!params.isAssignedDriver) return "Assigned driver can complete";
-  return "Action unavailable";
+  return <div ref={containerRef} className="h-48 w-full overflow-hidden rounded-2xl" />;
 }
 
 function extractCoords(point: any): [number, number] | null {
@@ -430,4 +495,27 @@ function extractCoords(point: any): [number, number] | null {
     return [Number(point.coordinates[0]), Number(point.coordinates[1])];
   }
   return null;
+}
+
+function prettyStatus(status: string): string {
+  switch (status) {
+    case "pending":
+      return "Dispatching";
+    case "accepted":
+      return "Accepted";
+    case "matched":
+      return "Matched";
+    case "completed":
+      return "Done";
+    case "cancelled":
+      return "Cancelled";
+    case "rejected":
+      return "Declined";
+    case "no_drivers_available":
+      return "No drivers";
+    case "pending_rider_confirm":
+      return "Awaiting rider";
+    default:
+      return status;
+  }
 }

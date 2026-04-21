@@ -266,6 +266,8 @@ class ProfileView(generics.RetrieveUpdateAPIView):
             profile.home_address = data["home_address"]
         if "phone_number" in data:
             profile.phone_number = data["phone_number"]
+        if "notify_on_ride_request" in data:
+            profile.notify_on_ride_request = data["notify_on_ride_request"]
         profile.save()
 
         return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
@@ -274,14 +276,24 @@ class UpdateLocationView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        lat = request.data.get("latitude")
-        lng = request.data.get("longitude")
+        data = request.data or {}
+        lat = data.get("latitude", data.get("lat"))
+        lng = data.get("longitude", data.get("lng"))
         if lat is None or lng is None:
-            return Response({"error": "Latitude and longitude required"}, status=400)
-        
+            return Response(
+                {"error": "Latitude and longitude required (lat/lng or latitude/longitude)."},
+                status=400,
+            )
+
+        try:
+            lng_f = float(lng)
+            lat_f = float(lat)
+        except (TypeError, ValueError):
+            return Response({"error": "lat/lng must be numbers."}, status=400)
+
         user = request.user
-        user.profile.current_location = Point(float(lng), float(lat))
+        user.profile.current_location = Point(lng_f, lat_f, srid=4326)
         user.profile.is_online = True
         user.profile.save()
-        
-        return Response({"status": "location updated"})
+
+        return Response({"status": "location updated", "lat": lat_f, "lng": lng_f})

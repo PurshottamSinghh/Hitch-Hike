@@ -15,6 +15,30 @@ export const Route = createFileRoute("/schedule")({
 });
 
 const DAYS = ["M", "T", "W", "T", "F"];
+
+const BUILDING_CHOICES: { value: string; label: string }[] = [
+  { value: "", label: "— Select building —" },
+  { value: "bancroft_campus", label: "Bancroft (Main) Campus" },
+  { value: "student_union", label: "Thompson Student Union" },
+  { value: "memorial_field_house", label: "Memorial Field House" },
+  { value: "university_hall", label: "University Hall" },
+  { value: "mulford_library", label: "Mulford Health Sciences Library" },
+  { value: "carlson_library", label: "Carlson Library" },
+  { value: "rocket_hall", label: "Rocket Hall" },
+  { value: "engineering_nitschke", label: "Nitschke Hall (Engineering)" },
+  { value: "engineering_palmer", label: "Palmer Hall" },
+  { value: "engineering_north", label: "North Engineering" },
+  { value: "stranahan_hall", label: "Stranahan Hall (Business)" },
+  { value: "health_education_building", label: "Health Education Building" },
+  { value: "savage_arena", label: "Savage Arena" },
+  { value: "glass_bowl", label: "Glass Bowl Stadium" },
+  { value: "wolfe_hall", label: "Wolfe Hall" },
+  { value: "bowman_oddy", label: "Bowman-Oddy Labs" },
+  { value: "mcmaster_hall", label: "McMaster Hall" },
+  { value: "scott_park_campus", label: "Scott Park Campus" },
+  { value: "health_science_campus", label: "Health Science Campus" },
+  { value: "off_campus", label: "Off-Campus / Other" },
+];
 type ClassBlock = {
   id: string;
   scheduleId: number;
@@ -40,6 +64,7 @@ function Schedule() {
     day_of_week: "mon" as "mon" | "tue" | "wed" | "thu" | "fri",
     start_time: "09:00",
     end_time: "10:15",
+    building: "",
     location: "",
   });
 
@@ -59,6 +84,7 @@ function Schedule() {
         day_of_week: "mon",
         start_time: "09:00",
         end_time: "10:15",
+        building: "",
         location: "",
       });
       await queryClient.invalidateQueries({ queryKey: ["classSchedules"] });
@@ -87,7 +113,10 @@ function Schedule() {
         day: dayIndex,
         startMin: timeToMinutes(schedule.start_time),
         endMin: timeToMinutes(schedule.end_time),
-        room: schedule.location || "TBD",
+        room:
+          schedule.location ||
+          BUILDING_CHOICES.find((b) => b.value === schedule.building)?.label ||
+          "TBD",
         hasMatch: false,
       } as ClassBlock;
     })
@@ -207,10 +236,21 @@ function Schedule() {
               className="rounded-xl border border-border bg-background px-2 py-2 text-[13px] outline-none focus:border-primary"
             />
           </div>
+          <select
+            value={form.building}
+            onChange={(e) => setForm((prev) => ({ ...prev, building: e.target.value }))}
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-[13px] outline-none focus:border-primary"
+          >
+            {BUILDING_CHOICES.map((b) => (
+              <option key={b.value} value={b.value}>
+                {b.label}
+              </option>
+            ))}
+          </select>
           <input
             value={form.location}
             onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))}
-            placeholder="Location (optional)"
+            placeholder="Room / suite (optional)"
             className="w-full rounded-xl border border-border bg-background px-3 py-2 text-[13px] outline-none focus:border-primary"
           />
           <div className="flex justify-end gap-2">

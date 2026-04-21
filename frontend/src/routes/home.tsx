@@ -4,11 +4,9 @@ import { Sun, Leaf, DollarSign, ChevronRight, Bell, Sparkles } from "lucide-reac
 import { PhoneFrame, Avatar, Pill, SectionHeader } from "@/components/app-shell";
 import { BottomNav } from "@/components/bottom-nav";
 import { RideCard, RoutePreviewSVG, StatusPill } from "@/components/ride-card";
-import { DispatchModal } from "@/components/dispatch-modal";
 import { useRouter } from "@tanstack/react-router";
 import { formatTime, formatRelativeTime } from "@/lib/utils";
 import * as api from "@/lib/api";
-import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/home")({
   head: () => ({
@@ -25,7 +23,6 @@ export const Route = createFileRoute("/home")({
 
 function Home() {
   const router = useRouter();
-  const [dismissedRequestId, setDismissedRequestId] = useState<number | null>(null);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
@@ -34,12 +31,7 @@ function Home() {
     queryFn: api.fetchProfile,
   });
   const { data: offers = [] } = useQuery({ queryKey: ["offers"], queryFn: api.fetchRideOffers });
-  const { data: pendingRequests = [], refetch: refetchRequests } = useQuery({
-    queryKey: ["pendingRequests"],
-    queryFn: api.fetchPendingRequests,
-    refetchInterval: 3000,
-  });
-  const { data: myRideRequests = [], refetch: refetchMyRequests } = useQuery({
+  const { data: myRideRequests = [] } = useQuery({
     queryKey: ["myRideRequests"],
     queryFn: api.fetchMyRideRequests,
     refetchInterval: 3000,
@@ -63,8 +55,6 @@ function Home() {
 
   const upcomingRide = offers.length > 0 ? offers[0] : null;
   const suggestedRides = offers.slice(1, 3);
-  const firstPendingRequest =
-    pendingRequests.find((r: any) => r.id !== dismissedRequestId) || pendingRequests[0] || null;
   const riderActiveRequest =
     myRideRequests.find(
       (r: any) =>
@@ -77,10 +67,6 @@ function Home() {
         r.driver_username === rawProfile.username &&
         ["accepted", "matched"].includes(r.status),
     ) || null;
-
-  useEffect(() => {
-    if (!firstPendingRequest) setDismissedRequestId(null);
-  }, [firstPendingRequest]);
 
   return (
     <PhoneFrame>
@@ -123,7 +109,7 @@ function Home() {
           <button
             onClick={() =>
               router.navigate({
-                to: `/ride/${riderActiveRequest.ride_offer || riderActiveRequest.id}`,
+                to: `/ride/${riderActiveRequest.id}`,
               })
             }
             className="mt-2 text-[12px] font-semibold text-foreground underline"
@@ -141,7 +127,7 @@ function Home() {
           <button
             onClick={() =>
               router.navigate({
-                to: `/ride/${driverActiveRequest.ride_offer || driverActiveRequest.id}`,
+                to: `/ride/${driverActiveRequest.id}`,
               })
             }
             className="mt-2 text-[12px] font-semibold text-foreground underline"
@@ -310,38 +296,6 @@ function Home() {
         </Link>
       </section>
 
-      {/* Dispatch Modal for Drivers */}
-      {rawProfile?.profile?.role === "driver" && firstPendingRequest && (
-        <DispatchModal
-          isOpen={true}
-          request={{
-            id: firstPendingRequest.id,
-            username: firstPendingRequest.rider_username || "Rider",
-            initials: (firstPendingRequest.rider_username || "RD").substring(0, 2).toUpperCase(),
-            pickupString: "Current Location",
-            dropoffString: "Destination",
-            desiredTime: firstPendingRequest.desired_time,
-            seatsNeeded: firstPendingRequest.seats_needed || 1,
-            major: "Student",
-            rating: 5.0,
-          }}
-          onAccept={async (id) => {
-            const accepted = await api.updateRequestStatus(id, "accept");
-            refetchRequests();
-            refetchMyRequests();
-            setDismissedRequestId(null);
-            const rideId = accepted?.ride_offer_id ?? id;
-            router.navigate({ to: `/ride/${rideId}` });
-          }}
-          onReject={async (id) => {
-            await api.updateRequestStatus(id, "reject");
-            refetchRequests();
-            refetchMyRequests();
-            setDismissedRequestId(null);
-          }}
-          onClose={() => setDismissedRequestId(firstPendingRequest.id)}
-        />
-      )}
     </PhoneFrame>
   );
 }

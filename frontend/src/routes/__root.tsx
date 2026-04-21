@@ -2,6 +2,7 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/r
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import appCss from "../styles.css?url";
+import { DispatchListener } from "@/components/dispatch-listener";
 
 function NotFoundComponent() {
   return (
@@ -71,6 +72,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <Outlet />
+      <DispatchListener />
     </QueryClientProvider>
   );
 }

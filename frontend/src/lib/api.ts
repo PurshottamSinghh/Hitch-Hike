@@ -4,13 +4,15 @@
  * Centralizes all frontend ↔ Django REST API communication.
  */
 
+import { clearAuth, getAuth, setAuth } from "./auth-storage";
+
 const API_BASE = "/api";
 
 /**
- * Helper to get Token from localStorage and format headers.
+ * Helper to get Token from per-tab auth storage and format headers.
  */
 function getAuthHeaders(): Record<string, string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = getAuth("token");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
@@ -133,8 +135,8 @@ export async function login(username: string, password: string) {
   );
 
   if (data && data.tokens) {
-    localStorage.setItem("token", data.tokens.access);
-    localStorage.setItem("user", JSON.stringify(data.user));
+    setAuth("token", data.tokens.access);
+    setAuth("user", JSON.stringify(data.user));
   }
   return data;
 }
@@ -175,12 +177,12 @@ export async function finishMicrosoftAuthFromUrl() {
     return { handled: true as const, success: false as const, error: "Missing access token." };
   }
 
-  localStorage.setItem("token", access);
-  if (refresh) localStorage.setItem("refresh_token", refresh);
+  setAuth("token", access);
+  if (refresh) setAuth("refresh_token", refresh);
 
   try {
     const user = await fetchProfile();
-    localStorage.setItem("user", JSON.stringify(user));
+    setAuth("user", JSON.stringify(user));
     return { handled: true as const, success: true as const };
   } catch (err: any) {
     logout();
@@ -211,8 +213,8 @@ export async function register(userData: {
   );
 
   if (data && data.tokens) {
-    localStorage.setItem("token", data.tokens.access);
-    localStorage.setItem("user", JSON.stringify(data.user));
+    setAuth("token", data.tokens.access);
+    setAuth("user", JSON.stringify(data.user));
   }
   return data;
 }
@@ -221,9 +223,7 @@ export async function register(userData: {
  * Authentication: Logout
  */
 export function logout() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("refresh_token");
-  localStorage.removeItem("user");
+  clearAuth();
   window.location.href = "/";
 }
 
@@ -243,13 +243,25 @@ export async function updateProfile(payload: {
   role?: "driver" | "rider";
   home_address?: string;
   phone_number?: string;
+  notify_on_ride_request?: boolean;
 }) {
   const data = await request<any>("/rides/auth/profile/", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
-  localStorage.setItem("user", JSON.stringify(data));
+  setAuth("user", JSON.stringify(data));
   return data;
+}
+
+/**
+ * Push the current browser geolocation to the backend so the matching
+ * engine and map views see the user at their real location.
+ */
+export async function updateLocation(coords: { lng: number; lat: number }) {
+  return request<any>("/rides/auth/location/", {
+    method: "POST",
+    body: JSON.stringify({ lng: coords.lng, lat: coords.lat }),
+  });
 }
 
 /**
@@ -263,9 +275,11 @@ export async function createRideRequest(
     seatsNeeded?: number;
     rideOfferId?: number;
     notes?: string;
+    pickupAddress?: string;
+    dropoffAddress?: string;
   },
 ) {
-  const body = {
+  const body: Record<string, unknown> = {
     pickup_location: {
       type: "Point",
       coordinates: [pickup.lng, pickup.lat],
@@ -276,13 +290,51 @@ export async function createRideRequest(
     },
     desired_time: options?.desiredTimeIso || new Date().toISOString(),
     seats_needed: options?.seatsNeeded || 1,
-    ride_offer: options?.rideOfferId,
+    pickup_address: options?.pickupAddress || "",
+    dropoff_address: options?.dropoffAddress || "",
     notes: options?.notes || "",
   };
+  if (options?.rideOfferId) body.ride_offer = options.rideOfferId;
 
   return request<any>("/rides/requests/", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Driver-side: poll the single dispatch invitation (5-min radius) for this
+ * driver. Returns `{}` when there is no pending invitation.
+ */
+export async function fetchMyDispatch() {
+  return request<any>("/rides/requests/my_dispatch/");
+}
+
+/**
+ * Rider-side: poll the most recent request I submitted so the UI can react
+ * to accept / reject / no_drivers_available transitions.
+ */
+export async function fetchMyActiveRequest() {
+  return request<any>("/rides/requests/my_active_request/");
+}
+
+/**
+ * Proactive schedule-based matches.
+ */
+export async function fetchProactiveMatches() {
+  const data = await request<unknown>("/rides/proactive_matches/");
+  return unwrapList<any>(data);
+}
+
+export async function offerProactiveMatch(matchId: number) {
+  return request<any>(`/rides/proactive_matches/${matchId}/offer/`, {
+    method: "POST",
+  });
+}
+
+export async function declineProactiveMatch(matchId: number) {
+  return request<any>(`/rides/proactive_matches/${matchId}/decline/`, {
+    method: "POST",
   });
 }
 
@@ -418,6 +470,7 @@ export type ClassSchedule = {
   day_of_week: "mon" | "tue" | "wed" | "thu" | "fri";
   start_time: string;
   end_time: string;
+  building: string;
   location: string;
 };
 
@@ -432,6 +485,7 @@ export async function createClassSchedule(payload: {
   day_of_week: "mon" | "tue" | "wed" | "thu" | "fri";
   start_time: string;
   end_time: string;
+  building?: string;
   location?: string;
 }) {
   return request<ClassSchedule>("/rides/schedules/", {

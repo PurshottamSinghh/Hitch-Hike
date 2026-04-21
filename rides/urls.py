@@ -1,20 +1,26 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import RideOfferViewSet, RideRequestViewSet, ClassScheduleViewSet
 
 from .auth_views import (
-    RegisterView,
     LoginView,
-    ProfileView,
-    UpdateLocationView,
-    MicrosoftAuthStartView,
     MicrosoftAuthCallbackView,
+    MicrosoftAuthStartView,
+    ProfileView,
+    RegisterView,
+    UpdateLocationView,
+)
+from .views import (
+    ClassScheduleViewSet,
+    ProactiveRideMatchViewSet,
+    RideOfferViewSet,
+    RideRequestViewSet,
 )
 
 router = DefaultRouter()
 router.register(r"offers", RideOfferViewSet, basename="ride-offer")
 router.register(r"requests", RideRequestViewSet, basename="ride-request")
 router.register(r"schedules", ClassScheduleViewSet, basename="class-schedule")
+router.register(r"proactive_matches", ProactiveRideMatchViewSet, basename="proactive-match")
 
 urlpatterns = [
     path("auth/register/", RegisterView.as_view(), name="register"),

@@ -26,35 +26,65 @@ function Onboarding() {
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [liveCoords, setLiveCoords] = useState<[number, number] | null>(null);
+  const [locStatus, setLocStatus] = useState<"idle" | "locating" | "ready" | "denied">("idle");
 
-  const steps = ["Name", "Address", "Role"];
+  const steps = ["Name", "Address", "Role", "Location"];
   const emailLooksCampus = isCampusEmail(email);
   const canNext =
     (step === 0 && name.trim().length > 1 && emailLooksCampus && password.length >= 8) ||
     (step === 1 && address.trim().length > 3) ||
-    (step === 2 && role !== null);
+    (step === 2 && role !== null) ||
+    (step === 3 && (liveCoords !== null || locStatus === "denied"));
+
+  const requestLive = () => {
+    if (!("geolocation" in navigator)) {
+      setLocStatus("denied");
+      return;
+    }
+    setLocStatus("locating");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLiveCoords([pos.coords.longitude, pos.coords.latitude]);
+        setLocStatus("ready");
+      },
+      () => setLocStatus("denied"),
+      { enableHighAccuracy: true, timeout: 10_000 },
+    );
+  };
 
   const next = async () => {
-    if (step < 2) setStep(step + 1);
-    else {
-      try {
-        setLoading(true);
-        setError("");
-        // API only accepts "driver" | "rider". Map UI "both" to rider (can change in profile later).
-        const backendRole = role === "driver" ? "driver" : "rider";
-        await api.register({
-          username: name,
-          email,
-          password,
-          role: backendRole,
-          home_address: address,
-        });
-        navigate({ to: "/home" });
-      } catch (err: any) {
-        setError(err.message || "Failed to register.");
-      } finally {
-        setLoading(false);
+    if (step < 3) {
+      if (step === 2) {
+        // Kick off location permission request ahead of the UI step.
+        requestLive();
       }
+      setStep(step + 1);
+      return;
+    }
+    try {
+      setLoading(true);
+      setError("");
+      const backendRole = role === "driver" ? "driver" : "rider";
+      await api.register({
+        username: name,
+        email,
+        password,
+        role: backendRole,
+        home_address: address,
+      });
+      if (liveCoords) {
+        try {
+          await api.updateLocation({ lng: liveCoords[0], lat: liveCoords[1] });
+        } catch {
+          // Non-fatal; user can refresh on /create.
+        }
+      }
+      navigate({ to: "/home" });
+    } catch (err: any) {
+      setError(err.message || "Failed to register.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -239,6 +269,63 @@ function Onboarding() {
               </div>
             </div>
           )}
+
+          {step === 3 && (
+            <div className="animate-rise">
+              <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
+                Step 04
+              </p>
+              <h1 className="mt-2 text-balance text-[32px] font-bold leading-[1.1] tracking-tight text-foreground">
+                Track your live location
+              </h1>
+              <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+                We use your live GPS to match rides in real time — Uber/Google
+                Maps style. Your location only leaves your device when you
+                actively request or are available for a ride.
+              </p>
+              <div className="mt-8 space-y-3">
+                <button
+                  onClick={requestLive}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 rounded-2xl border bg-surface p-4 text-left shadow-soft",
+                    locStatus === "ready"
+                      ? "border-success"
+                      : locStatus === "denied"
+                        ? "border-destructive"
+                        : "border-border",
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <MapPin className="h-5 w-5" />
+                    </span>
+                    <span>
+                      <p className="text-[15px] font-semibold tracking-tight text-foreground">
+                        {locStatus === "ready"
+                          ? "Live location captured"
+                          : locStatus === "locating"
+                            ? "Locating…"
+                            : locStatus === "denied"
+                              ? "Location permission denied"
+                              : "Use my current location"}
+                      </p>
+                      <p className="text-[12px] text-muted-foreground">
+                        {liveCoords
+                          ? `(${liveCoords[1].toFixed(4)}, ${liveCoords[0].toFixed(4)})`
+                          : "Tap to grant location access"}
+                      </p>
+                    </span>
+                  </span>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                </button>
+
+                <p className="text-[11px] text-muted-foreground">
+                  You can change this anytime in Profile. Without live location,
+                  rider matching won't work and drivers won't be reachable.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-8 flex items-center justify-between">
@@ -258,7 +345,7 @@ function Onboarding() {
                 : "bg-muted text-muted-foreground",
             )}
           >
-            {loading ? "Loading..." : step === 2 ? "Enter Hitch-Hike" : "Continue"}
+            {loading ? "Loading..." : step === 3 ? "Enter Hitch-Hike" : "Continue"}
             {!loading && <ArrowRight className="h-4 w-4" />}
           </button>
         </div>

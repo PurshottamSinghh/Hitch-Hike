@@ -28,6 +28,7 @@ function Profile() {
     home_address: "",
     phone_number: "",
     role: "rider" as "rider" | "driver",
+    notify_on_ride_request: true,
   });
 
   if (isLoading || !rawProfile) {
@@ -79,8 +80,21 @@ function Profile() {
       home_address: rawProfile.profile?.home_address || "",
       phone_number: rawProfile.profile?.phone_number || "",
       role: rawProfile.profile?.role === "driver" ? "driver" : "rider",
+      notify_on_ride_request: rawProfile.profile?.notify_on_ride_request !== false,
     });
     setIsEditing(true);
+  };
+
+  const toggleNotify = async () => {
+    const next = !(rawProfile.profile?.notify_on_ride_request !== false);
+    try {
+      const updated = await api.updateProfile({ notify_on_ride_request: next });
+      queryClient.setQueryData(["profile"], updated);
+      setSuccess(next ? "Notifications on." : "Notifications paused.");
+      setError("");
+    } catch (err: any) {
+      setError(err?.message || "Could not update preference.");
+    }
   };
 
   const saveProfile = () => {
@@ -141,7 +155,32 @@ function Profile() {
         </div>
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-3xl border border-border bg-surface shadow-soft">
+      <section className="mt-6 flex items-center justify-between rounded-2xl border border-border bg-surface p-4 shadow-soft">
+        <div>
+          <p className="text-[13px] font-semibold text-foreground">
+            Notify me when someone needs a ride
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            Drivers-only: receive pickup invitations within a 5-minute radius.
+          </p>
+        </div>
+        <button
+          onClick={toggleNotify}
+          className={`relative h-6 w-11 rounded-full transition-colors ${
+            rawProfile.profile?.notify_on_ride_request !== false
+              ? "bg-primary"
+              : "bg-border"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+              rawProfile.profile?.notify_on_ride_request !== false ? "left-5" : "left-0.5"
+            }`}
+          />
+        </button>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-3xl border border-border bg-surface shadow-soft">
         {[
           { label: "Email", value: currentUser.email },
           { label: "Home", value: currentUser.address },

@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, Pill } from "@/components/app-shell";
 import { RoutePreviewSVG } from "@/components/ride-card";
-import { Sparkles, MapPin, Clock } from "lucide-react";
+import { Sparkles, MapPin, Clock, Navigation } from "lucide-react";
 import { formatTime } from "@/lib/utils";
 
 export interface RideRequest {
@@ -22,6 +22,8 @@ export interface RideRequest {
   initials: string;
   major?: string;
   rating?: number;
+  /** Travel time in seconds from driver's current location to rider pickup. */
+  rerouteSeconds?: number | null;
 }
 
 interface DispatchModalProps {
@@ -40,6 +42,11 @@ export function DispatchModal({
   onClose,
 }: DispatchModalProps) {
   if (!request) return null;
+
+  const rerouteMin =
+    request.rerouteSeconds != null && request.rerouteSeconds > 0
+      ? Math.max(1, Math.round(request.rerouteSeconds / 60))
+      : null;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -71,6 +78,21 @@ export function DispatchModal({
         </div>
 
         <div className="p-6">
+          {rerouteMin != null && (
+            <div className="mb-4 flex items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/15 text-primary">
+                <Navigation className="h-4 w-4" />
+              </div>
+              <div className="flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Detour to pick up
+                </p>
+                <p className="text-sm font-bold text-foreground">
+                  ~{rerouteMin} min reroute from your location
+                </p>
+              </div>
+            </div>
+          )}
           <div className="rounded-2xl border border-border p-4 bg-background">
             <div className="flex items-center gap-2 text-sm text-foreground mb-3">
               <Clock className="w-4 h-4 text-muted-foreground" />
